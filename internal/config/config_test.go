@@ -85,13 +85,42 @@ func TestAddRecent_DedupeAndMoveToFront(t *testing.T) {
 	}
 }
 
+func TestAddRecent_DedupeCaseInsensitive(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.AddRecent(`C:\a.pdf`)
+	cfg.AddRecent(`C:\A.PDF`) // same file on Windows (case-insensitive filesystem), different casing
+
+	if len(cfg.RecentFiles) != 1 {
+		t.Fatalf("len(RecentFiles) = %d, want 1 (case-insensitive dedupe), got %+v", len(cfg.RecentFiles), cfg.RecentFiles)
+	}
+	if cfg.RecentFiles[0].Path != `C:\A.PDF` {
+		t.Fatalf("RecentFiles[0].Path = %q, want C:\\A.PDF (most recently used casing)", cfg.RecentFiles[0].Path)
+	}
+}
+
 func TestAddRecent_CapAtMax(t *testing.T) {
 	cfg := defaultConfig()
-	for i := 0; i < MaxRecentFiles+5; i++ {
+	total := MaxRecentFiles + 5
+	for i := 0; i < total; i++ {
 		cfg.AddRecent(`C:\docs\` + string(rune('a'+i)) + `.pdf`)
 	}
 	if len(cfg.RecentFiles) != MaxRecentFiles {
 		t.Fatalf("len(RecentFiles) = %d, want %d", len(cfg.RecentFiles), MaxRecentFiles)
+	}
+
+	// The newest MaxRecentFiles entries must survive, most-recently-added
+	// first; the oldest 5 (a.pdf..e.pdf) must have been evicted. This pins
+	// down WHICH entries survive and in what order, not just the count, so
+	// a regression that truncates from the wrong end or reverses order
+	// would be caught.
+	want := make([]string, MaxRecentFiles)
+	for i := 0; i < MaxRecentFiles; i++ {
+		want[i] = `C:\docs\` + string(rune('a'+total-1-i)) + `.pdf`
+	}
+	for i, rf := range cfg.RecentFiles {
+		if rf.Path != want[i] {
+			t.Fatalf("RecentFiles[%d].Path = %q, want %q (full: %+v)", i, rf.Path, want[i], cfg.RecentFiles)
+		}
 	}
 }
 
@@ -101,6 +130,18 @@ func TestRemoveRecent(t *testing.T) {
 	cfg.AddRecent(`C:\b.pdf`)
 
 	cfg.RemoveRecent(`C:\a.pdf`)
+
+	if len(cfg.RecentFiles) != 1 || cfg.RecentFiles[0].Path != `C:\b.pdf` {
+		t.Fatalf("RecentFiles = %+v, want only C:\\b.pdf", cfg.RecentFiles)
+	}
+}
+
+func TestRemoveRecent_CaseInsensitive(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.AddRecent(`C:\a.pdf`)
+	cfg.AddRecent(`C:\b.pdf`)
+
+	cfg.RemoveRecent(`C:\A.PDF`) // same file, different casing
 
 	if len(cfg.RecentFiles) != 1 || cfg.RecentFiles[0].Path != `C:\b.pdf` {
 		t.Fatalf("RecentFiles = %+v, want only C:\\b.pdf", cfg.RecentFiles)

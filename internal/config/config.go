@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -97,6 +98,13 @@ func writeFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// samePath reports whether a and b refer to the same file path. Windows
+// filesystem paths are case-insensitive, so comparisons use a case-fold
+// rather than plain string equality.
+func samePath(a, b string) bool {
+	return strings.EqualFold(a, b)
+}
+
 // AddRecent adds path to the front of the recent-files list, moving it to
 // the front (without duplicating) if it's already present, and capping the
 // list at MaxRecentFiles.
@@ -104,7 +112,7 @@ func (c *Config) AddRecent(path string) {
 	filtered := make([]RecentFile, 0, len(c.RecentFiles)+1)
 	filtered = append(filtered, RecentFile{Path: path, LastOpened: time.Now()})
 	for _, rf := range c.RecentFiles {
-		if rf.Path == path {
+		if samePath(rf.Path, path) {
 			continue
 		}
 		filtered = append(filtered, rf)
@@ -119,7 +127,7 @@ func (c *Config) AddRecent(path string) {
 func (c *Config) RemoveRecent(path string) {
 	filtered := make([]RecentFile, 0, len(c.RecentFiles))
 	for _, rf := range c.RecentFiles {
-		if rf.Path == path {
+		if samePath(rf.Path, path) {
 			continue
 		}
 		filtered = append(filtered, rf)
