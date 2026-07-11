@@ -19,7 +19,15 @@ type SearchMatch struct {
 
 // Search searches the whole document for query (case-insensitive) and
 // returns one SearchMatch per hit, ordered by page then position.
+//
+// An empty query returns (nil, nil): pdfium's FPDFText_FindNext never
+// advances past a zero-length pattern, so searching for "" would otherwise
+// spin forever without ever releasing the page/search handles it holds.
 func (d *Document) Search(query string) ([]SearchMatch, error) {
+	if query == "" {
+		return nil, nil
+	}
+
 	var matches []SearchMatch
 
 	for page := 0; page < d.pages; page++ {
