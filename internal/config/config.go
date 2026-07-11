@@ -97,8 +97,32 @@ func writeFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// AddRecent records path as a recently-opened file. (Task 8 replaces this
-// with full dedupe/cap/move-to-front semantics.)
+// AddRecent adds path to the front of the recent-files list, moving it to
+// the front (without duplicating) if it's already present, and capping the
+// list at MaxRecentFiles.
 func (c *Config) AddRecent(path string) {
-	c.RecentFiles = append([]RecentFile{{Path: path, LastOpened: time.Now()}}, c.RecentFiles...)
+	filtered := make([]RecentFile, 0, len(c.RecentFiles)+1)
+	filtered = append(filtered, RecentFile{Path: path, LastOpened: time.Now()})
+	for _, rf := range c.RecentFiles {
+		if rf.Path == path {
+			continue
+		}
+		filtered = append(filtered, rf)
+	}
+	if len(filtered) > MaxRecentFiles {
+		filtered = filtered[:MaxRecentFiles]
+	}
+	c.RecentFiles = filtered
+}
+
+// RemoveRecent removes path from the recent-files list, if present.
+func (c *Config) RemoveRecent(path string) {
+	filtered := make([]RecentFile, 0, len(c.RecentFiles))
+	for _, rf := range c.RecentFiles {
+		if rf.Path == path {
+			continue
+		}
+		filtered = append(filtered, rf)
+	}
+	c.RecentFiles = filtered
 }

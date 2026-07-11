@@ -67,3 +67,42 @@ func TestLoadFrom_CorruptFileReturnsDefault(t *testing.T) {
 		t.Fatalf("RecentFiles = %v, want empty default", cfg.RecentFiles)
 	}
 }
+
+func TestAddRecent_DedupeAndMoveToFront(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.AddRecent(`C:\a.pdf`)
+	cfg.AddRecent(`C:\b.pdf`)
+	cfg.AddRecent(`C:\a.pdf`) // re-open a.pdf, should move to front, not duplicate
+
+	if len(cfg.RecentFiles) != 2 {
+		t.Fatalf("len(RecentFiles) = %d, want 2", len(cfg.RecentFiles))
+	}
+	if cfg.RecentFiles[0].Path != `C:\a.pdf` {
+		t.Fatalf("RecentFiles[0].Path = %q, want C:\\a.pdf", cfg.RecentFiles[0].Path)
+	}
+	if cfg.RecentFiles[1].Path != `C:\b.pdf` {
+		t.Fatalf("RecentFiles[1].Path = %q, want C:\\b.pdf", cfg.RecentFiles[1].Path)
+	}
+}
+
+func TestAddRecent_CapAtMax(t *testing.T) {
+	cfg := defaultConfig()
+	for i := 0; i < MaxRecentFiles+5; i++ {
+		cfg.AddRecent(`C:\docs\` + string(rune('a'+i)) + `.pdf`)
+	}
+	if len(cfg.RecentFiles) != MaxRecentFiles {
+		t.Fatalf("len(RecentFiles) = %d, want %d", len(cfg.RecentFiles), MaxRecentFiles)
+	}
+}
+
+func TestRemoveRecent(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.AddRecent(`C:\a.pdf`)
+	cfg.AddRecent(`C:\b.pdf`)
+
+	cfg.RemoveRecent(`C:\a.pdf`)
+
+	if len(cfg.RecentFiles) != 1 || cfg.RecentFiles[0].Path != `C:\b.pdf` {
+		t.Fatalf("RecentFiles = %+v, want only C:\\b.pdf", cfg.RecentFiles)
+	}
+}
