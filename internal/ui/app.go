@@ -127,12 +127,14 @@ func (a *app) openFile(path string) error {
 		return a.paintTab(t, canvas, updateBounds)
 	})
 	if err != nil {
+		tabPage.Dispose()
 		doc.Close()
 		return err
 	}
 	pageView.SetClearsBackground(true)
 
 	if err := a.tabWidget.Pages().Add(tabPage); err != nil {
+		tabPage.Dispose()
 		doc.Close()
 		return err
 	}
