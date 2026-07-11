@@ -10,6 +10,7 @@ import (
 	. "github.com/lxn/walk/declarative"
 
 	"pdfreader/internal/config"
+	"pdfreader/internal/document"
 	"pdfreader/internal/pdfengine"
 )
 
@@ -59,6 +60,15 @@ func Run(initialFile string) (int, error) {
 				Items: []MenuItem{
 					Action{Text: "打开...(&O)", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyO}, OnTriggered: a.onOpenClicked},
 					Action{Text: "退出(&X)", OnTriggered: func() { a.mainWindow.Close() }},
+				},
+			},
+			Menu{
+				Text: "视图(&V)",
+				Items: []MenuItem{
+					Action{Text: "放大", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyOEMPlus}, OnTriggered: a.onZoomIn},
+					Action{Text: "缩小", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyOEMMinus}, OnTriggered: a.onZoomOut},
+					Action{Text: "适合宽度", OnTriggered: a.onFitWidth},
+					Action{Text: "适合页面", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.Key0}, OnTriggered: a.onFitPage},
 				},
 			},
 			Menu{
@@ -225,6 +235,50 @@ func (a *app) onFirstPage() {
 func (a *app) onLastPage() {
 	if t := a.currentTab(); t != nil {
 		a.goToPage(t, t.doc.PageCount()-1)
+	}
+}
+
+func (a *app) setZoom(t *tab, z document.Zoom) {
+	if t == nil {
+		return
+	}
+	t.zoom = z
+	t.pageView.Invalidate()
+}
+
+func (a *app) onZoomIn() {
+	t := a.currentTab()
+	if t == nil {
+		return
+	}
+	percent := t.zoom.Percent
+	if t.zoom.Mode != document.ZoomPercent {
+		percent = 100
+	}
+	a.setZoom(t, document.Zoom{Mode: document.ZoomPercent, Percent: document.ClampPercent(percent + 10)})
+}
+
+func (a *app) onZoomOut() {
+	t := a.currentTab()
+	if t == nil {
+		return
+	}
+	percent := t.zoom.Percent
+	if t.zoom.Mode != document.ZoomPercent {
+		percent = 100
+	}
+	a.setZoom(t, document.Zoom{Mode: document.ZoomPercent, Percent: document.ClampPercent(percent - 10)})
+}
+
+func (a *app) onFitWidth() {
+	if t := a.currentTab(); t != nil {
+		a.setZoom(t, document.Zoom{Mode: document.ZoomFitWidth})
+	}
+}
+
+func (a *app) onFitPage() {
+	if t := a.currentTab(); t != nil {
+		a.setZoom(t, document.Zoom{Mode: document.ZoomFitPage})
 	}
 }
 

@@ -11,7 +11,10 @@ import (
 // the cache when possible) and returns a walk.Bitmap ready to paint.
 // The caller owns the returned bitmap and must Dispose() it when replaced.
 func (t *tab) renderCurrentPage(viewportW, viewportH float64) (*walk.Bitmap, error) {
-	pageWidthPt, pageHeightPt := 612.0, 792.0 // US Letter fallback; refined in Task 14 via real page size.
+	pageWidthPt, pageHeightPt, err := t.doc.PageSize(t.page)
+	if err != nil {
+		return nil, err
+	}
 
 	scale := t.zoom.ScaleFactor(pageWidthPt, pageHeightPt, viewportW, viewportH)
 	dpi := document.DPIForScale(scale)
