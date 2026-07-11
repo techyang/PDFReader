@@ -61,10 +61,22 @@ func Run(initialFile string) (int, error) {
 					Action{Text: "退出(&X)", OnTriggered: func() { a.mainWindow.Close() }},
 				},
 			},
+			Menu{
+				Text: "转到(&G)",
+				Items: []MenuItem{
+					Action{Text: "上一页", Shortcut: Shortcut{Key: walk.KeyPrior}, OnTriggered: a.onPrevPage},
+					Action{Text: "下一页", Shortcut: Shortcut{Key: walk.KeyNext}, OnTriggered: a.onNextPage},
+					Action{Text: "首页", Shortcut: Shortcut{Key: walk.KeyHome}, OnTriggered: a.onFirstPage},
+					Action{Text: "末页", Shortcut: Shortcut{Key: walk.KeyEnd}, OnTriggered: a.onLastPage},
+				},
+			},
 		},
 		ToolBar: ToolBar{
 			Items: []MenuItem{
 				Action{Text: "打开", OnTriggered: a.onOpenClicked},
+				Separator{},
+				Action{Text: "◀", OnTriggered: a.onPrevPage},
+				Action{Text: "▶", OnTriggered: a.onNextPage},
 			},
 		},
 		Children: []Widget{
@@ -160,6 +172,60 @@ func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle)
 	defer bmp.Dispose()
 
 	return canvas.DrawImage(bmp, walk.Point{X: 0, Y: 0})
+}
+
+func (a *app) currentTab() *tab {
+	if a.tabWidget == nil || a.tabWidget.Pages().Len() == 0 {
+		return nil
+	}
+	idx := a.tabWidget.CurrentIndex()
+	if idx < 0 || idx >= len(a.tabs) {
+		return nil
+	}
+	return a.tabs[idx]
+}
+
+func (a *app) goToPage(t *tab, page int) {
+	if t == nil {
+		return
+	}
+	if page < 0 {
+		page = 0
+	}
+	if last := t.doc.PageCount() - 1; page > last {
+		page = last
+	}
+	t.page = page
+	t.pageView.Invalidate()
+	a.statusBar.SetText(fmt.Sprintf("第 %d / %d 页", t.page+1, t.doc.PageCount()))
+}
+
+func (a *app) onPrevPage() {
+	t := a.currentTab()
+	if t == nil {
+		return
+	}
+	a.goToPage(t, t.page-1)
+}
+
+func (a *app) onNextPage() {
+	t := a.currentTab()
+	if t == nil {
+		return
+	}
+	a.goToPage(t, t.page+1)
+}
+
+func (a *app) onFirstPage() {
+	if t := a.currentTab(); t != nil {
+		a.goToPage(t, 0)
+	}
+}
+
+func (a *app) onLastPage() {
+	if t := a.currentTab(); t != nil {
+		a.goToPage(t, t.doc.PageCount()-1)
+	}
 }
 
 func filepathBase(path string) string {
