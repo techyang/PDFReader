@@ -37,7 +37,10 @@ func Run(initialFile string) (int, error) {
 
 	cfg, err := config.Load()
 	if err != nil {
-		cfg = &config.Config{}
+		cfg = &config.Config{
+			WindowWidth:  config.DefaultWindowWidth,
+			WindowHeight: config.DefaultWindowHeight,
+		}
 	}
 
 	a := &app{pool: pool, cfg: cfg}
