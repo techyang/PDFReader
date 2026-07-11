@@ -1,7 +1,16 @@
+// main.go
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+
+	"pdfreader/internal/ui"
+)
 
 func main() {
-	fmt.Println("pdfreader starting")
+	if _, err := ui.Run(""); err != nil {
+		fmt.Fprintln(os.Stderr, "pdfreader:", err)
+		os.Exit(1)
+	}
 }
