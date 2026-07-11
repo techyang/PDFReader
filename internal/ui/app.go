@@ -85,8 +85,8 @@ func Run(initialFile string) (int, error) {
 			Items: []MenuItem{
 				Action{Text: "打开", OnTriggered: a.onOpenClicked},
 				Separator{},
-				Action{Text: "◀", OnTriggered: a.onPrevPage},
-				Action{Text: "▶", OnTriggered: a.onNextPage},
+				Action{Text: "◀", OnTriggered: a.onPrevPageToolbar},
+				Action{Text: "▶", OnTriggered: a.onNextPageToolbar},
 			},
 		},
 		Children: []Widget{
@@ -261,6 +261,23 @@ func (a *app) goToPage(t *tab, page int) {
 // interprets those same keys as "move tree selection". Without this guard,
 // clicking into the sidebar and pressing Home/End would both move the tree
 // selection AND change the current PDF page at the same time.
+//
+// This guard is only applied to the keyboard-accelerator path
+// (onPrevPage/onNextPage/onFirstPage/onLastPage below, wired to the
+// "转到" menu's Shortcut-bearing Actions). It deliberately does NOT apply
+// to the toolbar ◀/▶ buttons (see onPrevPageToolbar/onNextPageToolbar) -
+// an explicit mouse click is never the redundant-double-fire scenario this
+// guard exists for, and applying it there previously caused the toolbar
+// buttons to silently do nothing whenever the outline tree had focus
+// (including via plain Tab-key cycling, even with an empty outline).
+//
+// One known, accepted limitation: because walk ties a menu item's
+// OnTriggered to the same Action as its Shortcut, there is no way to let an
+// explicit mouse click on the "上一页"/"下一页" *menu item* bypass this
+// guard while still blocking the keyboard accelerator - both go through the
+// same guarded handler. This is considered acceptable since clicking the
+// menu item while the tree has focus is a much rarer path than the
+// toolbar/Tab-cycling case.
 func outlineFocused(t *tab) bool {
 	return t != nil && t.outlineTree != nil && t.outlineTree.Focused()
 }
@@ -295,6 +312,25 @@ func (a *app) onLastPage() {
 		return
 	}
 	a.goToPage(t, t.doc.PageCount()-1)
+}
+
+// onPrevPageToolbar and onNextPageToolbar back the toolbar's ◀/▶ buttons.
+// They intentionally skip the outlineFocused guard applied to
+// onPrevPage/onNextPage above - see the comment on outlineFocused for why.
+func (a *app) onPrevPageToolbar() {
+	t := a.currentTab()
+	if t == nil {
+		return
+	}
+	a.goToPage(t, t.page-1)
+}
+
+func (a *app) onNextPageToolbar() {
+	t := a.currentTab()
+	if t == nil {
+		return
+	}
+	a.goToPage(t, t.page+1)
 }
 
 func (a *app) setZoom(t *tab, z document.Zoom) {
