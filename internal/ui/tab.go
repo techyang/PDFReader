@@ -19,8 +19,9 @@ type tab struct {
 
 	outline []pdfengine.OutlineNode
 
-	tabPage  *walk.TabPage
-	pageView *walk.CustomWidget
+	tabPage     *walk.TabPage
+	pageView    *walk.CustomWidget
+	outlineTree *walk.TreeView
 }
 
 func newTab(path string, doc *pdfengine.Document) *tab {

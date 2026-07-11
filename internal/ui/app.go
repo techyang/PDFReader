@@ -145,7 +145,50 @@ func (a *app) openFile(path string) error {
 	tabPage.SetTitle(filepathBase(path))
 	tabPage.SetLayout(walk.NewVBoxLayout())
 
-	pageView, err := walk.NewCustomWidget(tabPage, 0, func(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
+	splitter, err := walk.NewHSplitter(tabPage)
+	if err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+
+	sidebarComposite, err := walk.NewComposite(splitter)
+	if err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+	sidebarComposite.SetLayout(walk.NewVBoxLayout())
+
+	outline, err := doc.Outline()
+	if err != nil {
+		outline = nil // treat outline errors as "no bookmarks" rather than failing the whole open
+	}
+	t.outline = outline
+
+	treeView, err := walk.NewTreeView(sidebarComposite)
+	if err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+	if err := treeView.SetModel(newOutlineModel(outline)); err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+	treeView.ItemActivated().Attach(func() {
+		item, ok := treeView.CurrentItem().(*outlineItem)
+		if !ok || item == nil {
+			return
+		}
+		if item.node.PageIndex >= 0 {
+			a.goToPage(t, item.node.PageIndex)
+		}
+	})
+	t.outlineTree = treeView
+
+	pageView, err := walk.NewCustomWidget(splitter, 0, func(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 		return a.paintTab(t, canvas, updateBounds)
 	})
 	if err != nil {
