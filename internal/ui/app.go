@@ -253,9 +253,21 @@ func (a *app) goToPage(t *tab, page int) {
 	a.statusBar.SetText(fmt.Sprintf("第 %d / %d 页", t.page+1, t.doc.PageCount()))
 }
 
+// outlineFocused reports whether t's outline tree currently has the
+// keyboard input focus. The page-navigation shortcuts below are registered
+// as bare-key accelerators (Home/End/PageUp/PageDown with no modifier), so
+// they fire on every keydown regardless of which control has focus -
+// including the outline TreeView, whose native SysTreeView32 control
+// interprets those same keys as "move tree selection". Without this guard,
+// clicking into the sidebar and pressing Home/End would both move the tree
+// selection AND change the current PDF page at the same time.
+func outlineFocused(t *tab) bool {
+	return t != nil && t.outlineTree != nil && t.outlineTree.Focused()
+}
+
 func (a *app) onPrevPage() {
 	t := a.currentTab()
-	if t == nil {
+	if t == nil || outlineFocused(t) {
 		return
 	}
 	a.goToPage(t, t.page-1)
@@ -263,22 +275,26 @@ func (a *app) onPrevPage() {
 
 func (a *app) onNextPage() {
 	t := a.currentTab()
-	if t == nil {
+	if t == nil || outlineFocused(t) {
 		return
 	}
 	a.goToPage(t, t.page+1)
 }
 
 func (a *app) onFirstPage() {
-	if t := a.currentTab(); t != nil {
-		a.goToPage(t, 0)
+	t := a.currentTab()
+	if t == nil || outlineFocused(t) {
+		return
 	}
+	a.goToPage(t, 0)
 }
 
 func (a *app) onLastPage() {
-	if t := a.currentTab(); t != nil {
-		a.goToPage(t, t.doc.PageCount()-1)
+	t := a.currentTab()
+	if t == nil || outlineFocused(t) {
+		return
 	}
+	a.goToPage(t, t.doc.PageCount()-1)
 }
 
 func (a *app) setZoom(t *tab, z document.Zoom) {
