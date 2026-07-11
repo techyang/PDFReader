@@ -19,13 +19,18 @@ type cacheEntry struct {
 // Cache is a small LRU cache of rendered page images, keyed by
 // (page index, DPI). It exists to avoid re-rendering the page the user
 // just navigated away from and back to.
+//
+// Cache is not safe for concurrent use. It is intended to be owned by a
+// single tab's UI-goroutine state; do not share one Cache across goroutines.
 type Cache struct {
 	capacity int
 	ll       *list.List // front = most recently used
 	items    map[CacheKey]*list.Element
 }
 
-// NewCache creates an LRU cache holding at most capacity entries.
+// NewCache creates an LRU cache holding at most capacity entries. A
+// capacity <= 0 disables caching: every Put is immediately evicted rather
+// than panicking.
 func NewCache(capacity int) *Cache {
 	return &Cache{
 		capacity: capacity,
