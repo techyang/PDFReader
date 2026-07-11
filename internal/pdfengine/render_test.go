@@ -118,3 +118,26 @@ func TestRenderPage_PixelDataIsCopied(t *testing.T) {
 		t.Fatal("img1 pixel data changed after subsequent RenderPage calls; RenderPage is not copying pixel data out of pdfium/WASM-owned memory")
 	}
 }
+
+func TestPageSize(t *testing.T) {
+	pool, err := NewPool()
+	if err != nil {
+		t.Fatalf("NewPool: %v", err)
+	}
+	defer pool.Close()
+
+	doc, err := pool.Open(readTestdata(t, "sample.pdf"), nil)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer doc.Close()
+
+	w, h, err := doc.PageSize(0)
+	if err != nil {
+		t.Fatalf("PageSize: %v", err)
+	}
+	// A4 in points, from gofpdf: 595.28 x 841.89 (approximately).
+	if w < 590 || w > 600 || h < 835 || h > 848 {
+		t.Fatalf("PageSize = %vx%v, want ~595x842 (A4)", w, h)
+	}
+}

@@ -35,3 +35,18 @@ func (d *Document) RenderPage(index int, dpi int) (*image.RGBA, error) {
 	copy(out.Pix, src.Pix)
 	return out, nil
 }
+
+// PageSize returns the page's width and height in PDF points (1/72 inch).
+func (d *Document) PageSize(index int) (widthPt, heightPt float64, err error) {
+	if index < 0 || index >= d.pages {
+		return 0, 0, fmt.Errorf("pdfengine: page index %d out of range [0,%d)", index, d.pages)
+	}
+	resp, err := d.instance.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{
+		Document: d.handle,
+		Index:    index,
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return resp.Width, resp.Height, nil
+}
