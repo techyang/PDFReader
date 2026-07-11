@@ -73,6 +73,38 @@ func TestZoom_FitPage_DegeneratePageSize(t *testing.T) {
 	}
 }
 
+func TestZoom_FitWidth_DegenerateViewportWidth(t *testing.T) {
+	z := Zoom{Mode: ZoomFitWidth}
+	got := z.ScaleFactor(200, 400, 0, 600)
+	if !almostEqual(got, 1.0) {
+		t.Fatalf("ScaleFactor = %v, want 1.0 for zero viewport width", got)
+	}
+	got = z.ScaleFactor(200, 400, -10, 600)
+	if !almostEqual(got, 1.0) {
+		t.Fatalf("ScaleFactor = %v, want 1.0 for negative viewport width", got)
+	}
+}
+
+func TestZoom_FitPage_DegenerateViewportSize(t *testing.T) {
+	z := Zoom{Mode: ZoomFitPage}
+	got := z.ScaleFactor(200, 400, 0, 600)
+	if !almostEqual(got, 1.0) {
+		t.Fatalf("ScaleFactor = %v, want 1.0 for zero viewport width", got)
+	}
+	got = z.ScaleFactor(200, 400, 800, 0)
+	if !almostEqual(got, 1.0) {
+		t.Fatalf("ScaleFactor = %v, want 1.0 for zero viewport height", got)
+	}
+	got = z.ScaleFactor(200, 400, -10, 600)
+	if !almostEqual(got, 1.0) {
+		t.Fatalf("ScaleFactor = %v, want 1.0 for negative viewport width", got)
+	}
+	got = z.ScaleFactor(200, 400, 800, -10)
+	if !almostEqual(got, 1.0) {
+		t.Fatalf("ScaleFactor = %v, want 1.0 for negative viewport height", got)
+	}
+}
+
 func TestClampPercent(t *testing.T) {
 	if got := ClampPercent(10); got != MinZoomPercent {
 		t.Fatalf("ClampPercent(10) = %v, want %v", got, MinZoomPercent)

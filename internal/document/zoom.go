@@ -28,12 +28,12 @@ type Zoom struct {
 func (z Zoom) ScaleFactor(pageWidthPt, pageHeightPt, viewportWidthPx, viewportHeightPx float64) float64 {
 	switch z.Mode {
 	case ZoomFitWidth:
-		if pageWidthPt <= 0 {
+		if pageWidthPt <= 0 || viewportWidthPx <= 0 {
 			return 1.0
 		}
 		return viewportWidthPx / pageWidthPt
 	case ZoomFitPage:
-		if pageWidthPt <= 0 || pageHeightPt <= 0 {
+		if pageWidthPt <= 0 || pageHeightPt <= 0 || viewportWidthPx <= 0 || viewportHeightPx <= 0 {
 			return 1.0
 		}
 		widthScale := viewportWidthPx / pageWidthPt
