@@ -78,3 +78,39 @@ func TestOutlineModelEmpty(t *testing.T) {
 		t.Fatalf("RootCount() = %d, want 0", got)
 	}
 }
+
+func TestOutlineModel_FindByPage(t *testing.T) {
+	nodes := []pdfengine.OutlineNode{
+		{
+			Title:     "Chapter 1",
+			PageIndex: 0,
+			Children: []pdfengine.OutlineNode{
+				{Title: "Section 1.1", PageIndex: 1},
+				{Title: "Section 1.2", PageIndex: 2},
+			},
+		},
+		{Title: "Chapter 2", PageIndex: 3},
+	}
+	m := newOutlineModel(nodes)
+
+	item := m.findByPage(2)
+	if item == nil || item.Text() != "Section 1.2" {
+		t.Fatalf("findByPage(2) = %v, want Section 1.2", item)
+	}
+
+	item = m.findByPage(3)
+	if item == nil || item.Text() != "Chapter 2" {
+		t.Fatalf("findByPage(3) = %v, want Chapter 2", item)
+	}
+
+	if item := m.findByPage(99); item != nil {
+		t.Fatalf("findByPage(99) = %v, want nil", item)
+	}
+}
+
+func TestOutlineModel_FindByPageEmpty(t *testing.T) {
+	m := newOutlineModel(nil)
+	if item := m.findByPage(0); item != nil {
+		t.Fatalf("findByPage(0) on empty model = %v, want nil", item)
+	}
+}

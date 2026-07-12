@@ -49,3 +49,28 @@ func newOutlineModel(nodes []pdfengine.OutlineNode) *outlineModel {
 
 func (m *outlineModel) RootCount() int                 { return len(m.roots) }
 func (m *outlineModel) RootAt(index int) walk.TreeItem { return m.roots[index] }
+
+// findByPage returns the first outline item (depth-first, root order)
+// whose PageIndex equals page, or nil if none match. Used to sync the
+// outline tree's selection to whichever page is currently most visible
+// while scrolling in continuous reading mode.
+func (m *outlineModel) findByPage(page int) *outlineItem {
+	for _, root := range m.roots {
+		if item := root.findByPage(page); item != nil {
+			return item
+		}
+	}
+	return nil
+}
+
+func (i *outlineItem) findByPage(page int) *outlineItem {
+	if i.node.PageIndex == page {
+		return i
+	}
+	for _, child := range i.children {
+		if item := child.findByPage(page); item != nil {
+			return item
+		}
+	}
+	return nil
+}
