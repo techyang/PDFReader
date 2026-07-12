@@ -182,13 +182,24 @@ func (a *app) openFile(path string) error {
 	}
 	t.outline = outline
 
+	// outlinePage is created via walk.NewTabPage(), which builds a detached,
+	// unparented WS_POPUP window (see walk's tabpage.go: InitWindow(tp, nil,
+	// ...)). It only becomes a real child of sidebarTabs's native window tree
+	// once sidebarTabs.Pages().Add(outlinePage) succeeds (walk's
+	// TabWidget.onInsertedPage does win.SetParent(page.hWnd, tw.hWnd) at that
+	// point, not at construction). Until then, tabPage.Dispose()'s
+	// WM_DESTROY/child-window cascade can't reach outlinePage or anything
+	// inside it (e.g. treeView), so every error branch between here and that
+	// successful Add call must dispose outlinePage explicitly too.
 	treeView, err := walk.NewTreeView(outlinePage)
 	if err != nil {
+		outlinePage.Dispose()
 		tabPage.Dispose()
 		doc.Close()
 		return err
 	}
 	if err := treeView.SetModel(newOutlineModel(outline)); err != nil {
+		outlinePage.Dispose()
 		tabPage.Dispose()
 		doc.Close()
 		return err
@@ -204,6 +215,7 @@ func (a *app) openFile(path string) error {
 	})
 	t.outlineTree = treeView
 	if err := sidebarTabs.Pages().Add(outlinePage); err != nil {
+		outlinePage.Dispose()
 		tabPage.Dispose()
 		doc.Close()
 		return err
@@ -218,8 +230,15 @@ func (a *app) openFile(path string) error {
 	thumbsPage.SetTitle("缩略图")
 	thumbsPage.SetLayout(walk.NewVBoxLayout())
 
+	// thumbsPage is subject to the same detached-until-Add-succeeds behavior
+	// as outlinePage above (see the comment there), so it too needs an
+	// explicit Dispose() on every error branch before sidebarTabs.Pages().Add
+	// succeeds - otherwise thumbsScroll and any ImageViews (and their
+	// AddDisposable'd bitmaps) already built in a failed buildThumbnails loop
+	// would leak, since tabPage.Dispose()'s cascade can't reach them.
 	thumbsScroll, err := walk.NewScrollView(thumbsPage)
 	if err != nil {
+		thumbsPage.Dispose()
 		tabPage.Dispose()
 		doc.Close()
 		return err
@@ -229,11 +248,13 @@ func (a *app) openFile(path string) error {
 	if err := buildThumbnails(thumbsScroll, doc, func(page int) {
 		a.goToPage(t, page)
 	}); err != nil {
+		thumbsPage.Dispose()
 		tabPage.Dispose()
 		doc.Close()
 		return err
 	}
 	if err := sidebarTabs.Pages().Add(thumbsPage); err != nil {
+		thumbsPage.Dispose()
 		tabPage.Dispose()
 		doc.Close()
 		return err
