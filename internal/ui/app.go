@@ -98,6 +98,7 @@ func Run(initialFile string) (int, error) {
 			},
 		},
 		ToolBar: ToolBar{
+			ButtonStyle: ToolBarButtonTextOnly,
 			Items: []MenuItem{
 				Action{Text: "打开", OnTriggered: a.onOpenClicked},
 				Separator{},
@@ -349,6 +350,20 @@ func (a *app) openFile(path string) error {
 		return err
 	}
 	pageView.SetClearsBackground(true)
+
+	// Give the page view most of the splitter's width by default - an
+	// outline/thumbnails sidebar only needs enough room to read titles or
+	// see a thumbnail, not half the window. stretchFactor is unexported on
+	// splitterLayout, but it satisfies this method set (same pattern
+	// declarative/builder.go uses for its StretchFactor field), so a local
+	// interface is enough to reach it without walk exporting the type.
+	type stretchFactorSetter interface {
+		SetStretchFactor(widget walk.Widget, factor int) error
+	}
+	if sfs, ok := splitter.Layout().(stretchFactorSetter); ok {
+		sfs.SetStretchFactor(sidebarComposite, 1)
+		sfs.SetStretchFactor(pageView, 4)
+	}
 
 	searchBar, err := a.buildSearchBar(tabPage, t)
 	if err != nil {
