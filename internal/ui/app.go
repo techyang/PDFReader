@@ -412,6 +412,16 @@ func (a *app) openFile(path string) error {
 	a.cfg.Save()
 	a.rebuildRecentMenu()
 
+	// newTab always starts a tab at ZoomFitPage - meaningless in continuous
+	// mode (see document.LayoutContinuous's doc comment) and, worse, silently
+	// degenerate: ScaleFactor treats a ZoomFitPage call with no viewport
+	// height as invalid and falls back to 1.0 (72 DPI), producing a tiny
+	// layout. setZoom/onToggleContinuousMode already guard against this for
+	// zoom changes on already-open tabs; a freshly opened tab needs the same
+	// guard when continuous mode is already on.
+	if a.cfg.ContinuousMode && t.zoom.Mode == document.ZoomFitPage {
+		t.zoom = document.Zoom{Mode: document.ZoomFitWidth}
+	}
 	a.applyPageViewMode(t)
 
 	return nil
