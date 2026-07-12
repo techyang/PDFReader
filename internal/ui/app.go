@@ -59,6 +59,7 @@ func Run(initialFile string) (int, error) {
 				Text: "文件(&F)",
 				Items: []MenuItem{
 					Action{Text: "打开...(&O)", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyO}, OnTriggered: a.onOpenClicked},
+					Action{Text: "关闭标签(&W)", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyW}, OnTriggered: a.closeCurrentTab},
 					Action{Text: "退出(&X)", OnTriggered: func() { a.mainWindow.Close() }},
 				},
 			},
@@ -144,6 +145,34 @@ func (a *app) openFile(path string) error {
 		return err
 	}
 	tabPage.SetTitle(filepathBase(path))
+
+	// closeMenu is tabPage's right-click "关闭标签" context menu. It is
+	// built and attached here, immediately after tabPage's creation and
+	// well before the many fallible steps below that already dispose
+	// tabPage on error (see the comment above the outlinePage/thumbsPage
+	// setup for why those need explicit disposal too) - because
+	// WindowBase.Dispose() (see walk's window.go) already disposes
+	// wb.contextMenu whenever it's set, attaching the menu this early
+	// means every later `tabPage.Dispose()` error branch in this
+	// function automatically cleans up closeMenu too, with no extra
+	// disposal calls needed at each of those sites.
+	closeMenu, err := walk.NewMenu()
+	if err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+	closeAction := walk.NewAction()
+	closeAction.SetText("关闭标签")
+	closeAction.Triggered().Attach(func() {
+		if idx := a.tabWidget.Pages().Index(tabPage); idx >= 0 {
+			a.tabWidget.SetCurrentIndex(idx)
+			a.closeCurrentTab()
+		}
+	})
+	closeMenu.Actions().Add(closeAction)
+	tabPage.SetContextMenu(closeMenu)
+
 	tabPage.SetLayout(walk.NewVBoxLayout())
 
 	splitter, err := walk.NewHSplitter(tabPage)
@@ -488,6 +517,58 @@ func (a *app) onToggleSearch() {
 	t.searchBar.SetVisible(visible)
 	if visible {
 		t.searchEdit.SetFocus()
+	}
+}
+
+// closeCurrentTab closes the tab at the TabWidget's current index: it
+// closes the underlying pdfium document, detaches and destroys the tab's
+// entire widget tree, and updates the status bar.
+//
+// walk's TabWidget.Pages().RemoveAt() (see tabpagelist.go/tabwidget.go in
+// the walk module) only detaches the removed TabPage - it calls
+// removePage(), which does SetParent(nil) and flips the window style back
+// to WS_POPUP, updates TabPageList's bookkeeping, and sends
+// TCM_DELETEITEM - but it never calls Dispose() on the page. Without an
+// explicit Dispose() here, every tab close would leak the tab's entire
+// widget tree: the outline TreeView, the thumbnails ScrollView and all its
+// ImageViews with their AddDisposable'd bitmaps (Task 16), the search bar,
+// and the page CustomWidget - none of their WM_DESTROY-triggered Dispose()
+// cascades (see window.go's WM_DESTROY handler, which calls
+// wb.window.Dispose() for whatever native window is being torn down) would
+// ever fire, since nothing else calls DestroyWindow on the detached
+// TabPage's hWnd.
+//
+// Dispose() is called AFTER RemoveAt(), not before: RemoveAt() must run
+// first so TabWidget's internal state (TabPageList.items, the native tab
+// control's item list, current-selection bookkeeping) is fully updated
+// while the page is still attached and in a consistent state. Disposing
+// the page while it's still an attached, current member of Pages() would
+// destroy its native window out from under that still-pending
+// bookkeeping. Once detached, disposing it is safe and destroys the whole
+// widget subtree regardless of the TabPage's own (now unparented) status,
+// since DestroyWindow cascades to real child windows regardless of what
+// the top window's own parent is.
+func (a *app) closeCurrentTab() {
+	idx := a.tabWidget.CurrentIndex()
+	if idx < 0 || idx >= len(a.tabs) {
+		return
+	}
+
+	t := a.tabs[idx]
+	tabPage := t.tabPage
+	t.doc.Close()
+
+	if err := a.tabWidget.Pages().RemoveAt(idx); err != nil {
+		return
+	}
+	tabPage.Dispose()
+
+	a.tabs = append(a.tabs[:idx], a.tabs[idx+1:]...)
+
+	if len(a.tabs) == 0 {
+		a.statusBar.SetText("就绪")
+	} else if nt := a.currentTab(); nt != nil {
+		a.statusBar.SetText(fmt.Sprintf("第 %d / %d 页", nt.page+1, nt.doc.PageCount()))
 	}
 }
 
