@@ -17,11 +17,21 @@ type tab struct {
 	zoom  document.Zoom
 	cache *document.Cache
 
-	outline []pdfengine.OutlineNode
+	outline      []pdfengine.OutlineNode
+	outlineModel *outlineModel
 
 	tabPage     *walk.TabPage
+	pageScroll  *walk.ScrollView
 	pageView    *walk.CustomWidget
 	outlineTree *walk.TreeView
+
+	// continuousLayout/continuousLayoutW/continuousTotalH cache the last
+	// computed continuous-mode page layout (see ensureContinuousLayout in
+	// pageview.go). continuousLayout is nil whenever it needs
+	// recomputing (mode just turned on, zoom changed, or never computed).
+	continuousLayout  []document.PageLayout
+	continuousLayoutW float64
+	continuousTotalH  float64
 
 	searchMatches []pdfengine.SearchMatch
 	searchIndex   int // index into searchMatches of the currently-highlighted match
@@ -36,6 +46,6 @@ func newTab(path string, doc *pdfengine.Document) *tab {
 		doc:   doc,
 		page:  0,
 		zoom:  document.Zoom{Mode: document.ZoomFitPage},
-		cache: document.NewCache(5),
+		cache: document.NewCache(16),
 	}
 }
