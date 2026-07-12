@@ -442,6 +442,10 @@ func (a *app) applyPageViewMode(t *tab) {
 }
 
 func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle) error {
+	if a.cfg.ContinuousMode {
+		return a.paintContinuousTab(t, canvas)
+	}
+
 	bounds := t.pageView.ClientBounds()
 	bmp, err := t.renderCurrentPage(float64(bounds.Width), float64(bounds.Height))
 	if err != nil {
@@ -458,6 +462,66 @@ func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle)
 	y := (bounds.Height - size.Height) / 2
 
 	return canvas.DrawImage(bmp, walk.Point{X: x, Y: y})
+}
+
+// paintContinuousTab draws every page that intersects the current
+// scroll viewport (see document.VisiblePages) at its computed offset,
+// and updates t.page/the status bar/the outline selection to track
+// whichever page is now most visible.
+func (a *app) paintContinuousTab(t *tab, canvas *walk.Canvas) error {
+	viewport := t.pageScroll.ClientBoundsPixels()
+	if err := ensureContinuousLayout(t, float64(viewport.Width)); err != nil {
+		return canvas.DrawText(err.Error(), nil, walk.RGB(200, 0, 0), viewport, walk.TextWordbreak)
+	}
+
+	scrollY := continuousScrollY(t.pageView)
+	viewportH := float64(viewport.Height)
+
+	start, end := document.VisiblePages(t.continuousLayout, scrollY, viewportH)
+	for i := start; i < end; i++ {
+		layout := t.continuousLayout[i]
+		bmp, err := renderPageBitmap(t.doc, t.cache, i, layout.DPI)
+		if err != nil {
+			continue // skip a single bad page rather than failing the whole view
+		}
+		x := 0
+		if layout.Width < float64(viewport.Width) {
+			x = int((float64(viewport.Width) - layout.Width) / 2) // center narrower pages horizontally
+		}
+		y := int(layout.Top - scrollY)
+		drawErr := canvas.DrawImagePixels(bmp, walk.Point{X: x, Y: y})
+		bmp.Dispose()
+		if drawErr != nil {
+			return drawErr
+		}
+	}
+
+	a.updateCurrentPageFromScroll(t, scrollY, viewportH)
+
+	return nil
+}
+
+// updateCurrentPageFromScroll re-derives t.page from the current scroll
+// position and, if it changed, refreshes the status bar and the outline
+// tree's selection. This runs on every continuous-mode repaint (i.e. on
+// every scroll step, since scrolling repaints pageView) rather than
+// through a dedicated scroll event, because walk.ScrollView doesn't
+// expose one publicly.
+func (a *app) updateCurrentPageFromScroll(t *tab, scrollY, viewportH float64) {
+	if len(t.continuousLayout) == 0 {
+		return
+	}
+	page := document.MostVisiblePage(t.continuousLayout, scrollY, viewportH)
+	if page == t.page {
+		return
+	}
+	t.page = page
+	a.statusBar.SetText(fmt.Sprintf("第 %d / %d 页", t.page+1, t.doc.PageCount()))
+	if t.outlineModel != nil && t.outlineTree != nil {
+		if item := t.outlineModel.findByPage(t.page); item != nil {
+			t.outlineTree.SetCurrentItem(item)
+		}
+	}
 }
 
 func (a *app) currentTab() *tab {
