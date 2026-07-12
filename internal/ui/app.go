@@ -160,13 +160,29 @@ func (a *app) openFile(path string) error {
 	}
 	sidebarComposite.SetLayout(walk.NewVBoxLayout())
 
+	sidebarTabs, err := walk.NewTabWidget(sidebarComposite)
+	if err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+
+	outlinePage, err := walk.NewTabPage()
+	if err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+	outlinePage.SetTitle("目录")
+	outlinePage.SetLayout(walk.NewVBoxLayout())
+
 	outline, err := doc.Outline()
 	if err != nil {
 		outline = nil // treat outline errors as "no bookmarks" rather than failing the whole open
 	}
 	t.outline = outline
 
-	treeView, err := walk.NewTreeView(sidebarComposite)
+	treeView, err := walk.NewTreeView(outlinePage)
 	if err != nil {
 		tabPage.Dispose()
 		doc.Close()
@@ -187,6 +203,41 @@ func (a *app) openFile(path string) error {
 		}
 	})
 	t.outlineTree = treeView
+	if err := sidebarTabs.Pages().Add(outlinePage); err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+
+	thumbsPage, err := walk.NewTabPage()
+	if err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+	thumbsPage.SetTitle("缩略图")
+	thumbsPage.SetLayout(walk.NewVBoxLayout())
+
+	thumbsScroll, err := walk.NewScrollView(thumbsPage)
+	if err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+	thumbsScroll.SetLayout(walk.NewVBoxLayout())
+
+	if err := buildThumbnails(thumbsScroll, doc, func(page int) {
+		a.goToPage(t, page)
+	}); err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+	if err := sidebarTabs.Pages().Add(thumbsPage); err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
 
 	pageView, err := walk.NewCustomWidget(splitter, 0, func(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 		return a.paintTab(t, canvas, updateBounds)
