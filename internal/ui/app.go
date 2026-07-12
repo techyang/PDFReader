@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -23,6 +24,8 @@ type app struct {
 	mainWindow *walk.MainWindow
 	tabWidget  *walk.TabWidget
 	statusBar  *walk.StatusBarItem
+
+	recentMenuAction *walk.Action
 
 	tabs []*tab
 }
@@ -59,6 +62,10 @@ func Run(initialFile string) (int, error) {
 				Text: "文件(&F)",
 				Items: []MenuItem{
 					Action{Text: "打开...(&O)", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyO}, OnTriggered: a.onOpenClicked},
+					Menu{
+						AssignActionTo: &a.recentMenuAction,
+						Text:           "最近打开的文件",
+					},
 					Action{Text: "关闭标签(&W)", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyW}, OnTriggered: a.closeCurrentTab},
 					Action{Text: "退出(&X)", OnTriggered: func() { a.mainWindow.Close() }},
 				},
@@ -80,6 +87,13 @@ func Run(initialFile string) (int, error) {
 					Action{Text: "下一页", Shortcut: Shortcut{Key: walk.KeyNext}, OnTriggered: a.onNextPage},
 					Action{Text: "首页", Shortcut: Shortcut{Key: walk.KeyHome}, OnTriggered: a.onFirstPage},
 					Action{Text: "末页", Shortcut: Shortcut{Key: walk.KeyEnd}, OnTriggered: a.onLastPage},
+					Action{Text: "跳转到页面...(&G)", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyG}, OnTriggered: a.onGoToPage},
+				},
+			},
+			Menu{
+				Text: "帮助(&H)",
+				Items: []MenuItem{
+					Action{Text: "关于...", OnTriggered: func() { showAboutDialog(a.mainWindow) }},
 				},
 			},
 		},
@@ -101,7 +115,17 @@ func Run(initialFile string) (int, error) {
 		},
 	}
 
-	return mw.Run()
+	if err := mw.Create(); err != nil {
+		return 1, err
+	}
+	a.rebuildRecentMenu()
+	if initialFile != "" {
+		if err := a.openFile(initialFile); err != nil {
+			walk.MsgBox(a.mainWindow, "无法打开文件", err.Error(), walk.MsgBoxIconError)
+		}
+	}
+	a.mainWindow.Show()
+	return a.mainWindow.Run(), nil
 }
 
 func (a *app) onOpenClicked() {
@@ -133,7 +157,23 @@ func (a *app) openFile(path string) error {
 	}
 
 	doc, err := a.pool.Open(data, nil)
-	if err != nil {
+	if errors.Is(err, pdfengine.ErrPasswordRequired) {
+		wrongAttempt := false
+		for {
+			pw, ok := promptPassword(a.mainWindow, filepathBase(path), wrongAttempt)
+			if !ok {
+				return errors.New("已取消：需要密码")
+			}
+			doc, err = a.pool.Open(data, &pw)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, pdfengine.ErrPasswordRequired) {
+				return err
+			}
+			wrongAttempt = true
+		}
+	} else if err != nil {
 		return err
 	}
 
@@ -322,6 +362,10 @@ func (a *app) openFile(path string) error {
 
 	a.statusBar.SetText(fmt.Sprintf("第 %d / %d 页", t.page+1, t.doc.PageCount()))
 	pageView.Invalidate()
+
+	a.cfg.AddRecent(path)
+	a.cfg.Save()
+	a.rebuildRecentMenu()
 
 	return nil
 }
@@ -569,6 +613,60 @@ func (a *app) closeCurrentTab() {
 		a.statusBar.SetText("就绪")
 	} else if nt := a.currentTab(); nt != nil {
 		a.statusBar.SetText(fmt.Sprintf("第 %d / %d 页", nt.page+1, nt.doc.PageCount()))
+	}
+}
+
+func (a *app) onGoToPage() {
+	t := a.currentTab()
+	if t == nil {
+		return
+	}
+	page, ok := promptGoToPage(a.mainWindow, t.page+1, t.doc.PageCount())
+	if !ok {
+		return
+	}
+	a.goToPage(t, page)
+}
+
+// rebuildRecentMenu clears and repopulates the "最近打开的文件" submenu from
+// a.cfg.RecentFiles. It is called once at startup (after the recent-files
+// menu action exists but before the window is shown) and again after every
+// successful openFile, so the menu always reflects the persisted list.
+//
+// The clearing loop below (Actions().RemoveAt(0) until empty) does not leak:
+// ActionList.RemoveAt calls action.release(), which decrements the Action's
+// refCount to 0 (each action here was added exactly once, so refCount was 1)
+// and, at that point, deletes the action from walk's global actionsById/
+// shortcut2Action maps (see walk's action.go). Menu.onRemovingAction (the
+// ActionList's observer callback fired by RemoveAt) also issues the native
+// win.RemoveMenu Win32 call against the submenu's HMENU before release()
+// runs (see walk's menu.go), so the native menu item is torn down too. None
+// of these actions carry a submenu or an image, so release()'s optional
+// submenu-Dispose branch never applies. Net effect: every rebuild fully
+// tears down the previous batch of actions, both at the Go level and at the
+// native Win32 level, before creating the next batch - nothing accumulates
+// across repeated opens.
+func (a *app) rebuildRecentMenu() {
+	if a.recentMenuAction == nil {
+		return
+	}
+	menu := a.recentMenuAction.Menu()
+	for menu.Actions().Len() > 0 {
+		menu.Actions().RemoveAt(0)
+	}
+	for _, rf := range a.cfg.RecentFiles {
+		path := rf.Path
+		action := walk.NewAction()
+		action.SetText(path)
+		action.Triggered().Attach(func() {
+			if err := a.openFile(path); err != nil {
+				a.cfg.RemoveRecent(path)
+				a.cfg.Save()
+				a.rebuildRecentMenu()
+				walk.MsgBox(a.mainWindow, "文件不存在", fmt.Sprintf("无法打开 %s，已从最近列表中移除。", path), walk.MsgBoxIconWarning)
+			}
+		})
+		menu.Actions().Add(action)
 	}
 }
 
