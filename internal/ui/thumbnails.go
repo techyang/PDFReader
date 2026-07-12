@@ -27,12 +27,25 @@ func buildThumbnails(parent walk.Container, doc *pdfengine.Document, onActivate 
 
 		iv, err := walk.NewImageView(parent)
 		if err != nil {
+			bmp.Dispose()
 			return err
 		}
 		if err := iv.SetImage(bmp); err != nil {
+			bmp.Dispose()
 			return err
 		}
+		// Tie the bitmap's native GDI handle to the ImageView's lifetime: walk's
+		// ImageView.SetImage only stores the reference (it never disposes a
+		// previous image, and has no Dispose override of its own), and
+		// WindowBase.Dispose only releases objects explicitly registered via
+		// AddDisposable. Without this, every thumbnail leaks an HBITMAP for the
+		// life of the process, not just the life of the tab.
+		iv.AddDisposable(bmp)
+
 		iv.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
+			if button != walk.LeftButton {
+				return
+			}
 			onActivate(page)
 		})
 	}
