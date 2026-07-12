@@ -279,7 +279,8 @@ func (a *app) openFile(path string) error {
 		doc.Close()
 		return err
 	}
-	if err := treeView.SetModel(newOutlineModel(outline)); err != nil {
+	outlineModel := newOutlineModel(outline)
+	if err := treeView.SetModel(outlineModel); err != nil {
 		outlinePage.Dispose()
 		tabPage.Dispose()
 		doc.Close()
@@ -295,6 +296,7 @@ func (a *app) openFile(path string) error {
 		}
 	})
 	t.outlineTree = treeView
+	t.outlineModel = outlineModel
 	if err := sidebarTabs.Pages().Add(outlinePage); err != nil {
 		outlinePage.Dispose()
 		tabPage.Dispose()
@@ -341,7 +343,15 @@ func (a *app) openFile(path string) error {
 		return err
 	}
 
-	pageView, err := walk.NewCustomWidget(splitter, 0, func(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
+	pageScroll, err := walk.NewScrollView(splitter)
+	if err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+	pageScroll.SetScrollbars(false, true) // no horizontal bar; the vertical one only does anything in continuous mode
+
+	pageView, err := walk.NewCustomWidget(pageScroll, 0, func(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 		return a.paintTab(t, canvas, updateBounds)
 	})
 	if err != nil {
@@ -362,8 +372,13 @@ func (a *app) openFile(path string) error {
 	}
 	if sfs, ok := splitter.Layout().(stretchFactorSetter); ok {
 		sfs.SetStretchFactor(sidebarComposite, 1)
-		sfs.SetStretchFactor(pageView, 4)
+		sfs.SetStretchFactor(pageScroll, 4)
 	}
+
+	t.pageScroll = pageScroll
+	pageScroll.SizeChanged().Attach(func() {
+		a.applyPageViewMode(t)
+	})
 
 	searchBar, err := a.buildSearchBar(tabPage, t)
 	if err != nil {
@@ -392,7 +407,38 @@ func (a *app) openFile(path string) error {
 	a.cfg.Save()
 	a.rebuildRecentMenu()
 
+	a.applyPageViewMode(t)
+
 	return nil
+}
+
+// applyPageViewMode sizes t.pageView to match the app's current reading
+// mode (single page vs continuous) and t's current zoom. It's the single
+// place that decides pageView's size - called right after a tab is
+// created (openFile), whenever its viewport resizes (pageScroll's
+// SizeChanged, wired in openFile), whenever its zoom changes (setZoom),
+// and whenever the continuous-mode toggle flips for every open tab
+// (onToggleContinuousMode).
+func (a *app) applyPageViewMode(t *tab) {
+	if t.pageScroll == nil || t.pageView == nil {
+		return
+	}
+	viewport := t.pageScroll.ClientBoundsPixels()
+	if viewport.Width <= 0 || viewport.Height <= 0 {
+		return
+	}
+
+	if !a.cfg.ContinuousMode {
+		t.continuousLayout = nil
+		t.pageView.SetSizePixels(walk.Size{Width: viewport.Width, Height: viewport.Height})
+		t.pageView.Invalidate()
+		return
+	}
+
+	if err := ensureContinuousLayout(t, float64(viewport.Width)); err != nil {
+		return // leave whatever layout was computed last time in place
+	}
+	t.pageView.Invalidate()
 }
 
 func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle) error {
