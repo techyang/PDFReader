@@ -413,12 +413,16 @@ func (a *app) openFile(path string) error {
 }
 
 // applyPageViewMode sizes t.pageView to match the app's current reading
-// mode (single page vs continuous) and t's current zoom. It's the single
+// mode (single page vs continuous) and t's current zoom. It's the main
 // place that decides pageView's size - called right after a tab is
 // created (openFile), whenever its viewport resizes (pageScroll's
 // SizeChanged, wired in openFile), whenever its zoom changes (setZoom),
 // and whenever the continuous-mode toggle flips for every open tab
-// (onToggleContinuousMode).
+// (onToggleContinuousMode). paintTab additionally re-checks and corrects
+// the size on every single-page paint as a defensive fallback for the
+// case where the very first paint lands before SizeChanged has fired
+// even once - both derive the target size the same way and only write
+// when it actually differs, so the two can't disagree.
 func (a *app) applyPageViewMode(t *tab) {
 	if t.pageScroll == nil || t.pageView == nil {
 		return
