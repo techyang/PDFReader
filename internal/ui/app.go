@@ -446,7 +446,24 @@ func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle)
 		return a.paintContinuousTab(t, canvas)
 	}
 
+	// pageView's size is normally kept in sync with the viewport by
+	// applyPageViewMode, triggered off pageScroll's SizeChanged event. But
+	// the very first paint of a freshly created tab can land before that
+	// event has fired even once (widget creation vs. layout ordering), in
+	// which case pageView is still at whatever size walk.NewCustomWidget
+	// gave it by default - not the real viewport. Re-checking here closes
+	// that race without depending on event timing.
+	if viewport := t.pageScroll.ClientBoundsPixels(); viewport.Width > 0 && viewport.Height > 0 {
+		if cur := t.pageView.SizePixels(); cur.Width != viewport.Width || cur.Height != viewport.Height {
+			t.pageView.SetSizePixels(walk.Size{Width: viewport.Width, Height: viewport.Height})
+		}
+	}
+
 	bounds := t.pageView.ClientBounds()
+	if bounds.Width <= 0 || bounds.Height <= 0 {
+		return nil // not laid out yet - nothing sensible to render
+	}
+
 	bmp, err := t.renderCurrentPage(float64(bounds.Width), float64(bounds.Height))
 	if err != nil {
 		return canvas.DrawText(err.Error(), nil, walk.RGB(200, 0, 0), updateBounds, walk.TextWordbreak)
@@ -456,10 +473,19 @@ func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle)
 	// Center the rendered page within the viewport - it's only exactly
 	// as wide/tall as the viewport in ZoomFitWidth/ZoomFitPage; ZoomPercent
 	// and any rounding slack in the other two modes leave a margin that
-	// otherwise always collects in the bottom-right corner.
+	// otherwise always collects in the bottom-right corner. Clamp to 0:
+	// RenderPage's actual pixel output can round up a hair past bounds,
+	// and a negative offset would push part of the page off-canvas
+	// instead of just trimming the (sub-pixel) margin to nothing.
 	size := bmp.Size()
 	x := (bounds.Width - size.Width) / 2
 	y := (bounds.Height - size.Height) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
 
 	return canvas.DrawImage(bmp, walk.Point{X: x, Y: y})
 }
