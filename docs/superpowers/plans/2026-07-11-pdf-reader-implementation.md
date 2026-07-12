@@ -3023,6 +3023,8 @@ func (a *app) rebuildRecentMenu() {
 }
 ```
 
+**勘误（Task 19 实施后发现）：** 上面这段参考代码里的 `Triggered` 处理器有 bug——它把 `openFile` 返回的*任何*错误都当作"文件不存在"，从最近列表里移除并弹出"文件不存在"提示。但 `openFile` 失败还有很多与文件是否存在无关的原因，最典型的是用户在密码对话框里点了"取消"（`errors.New("已取消：需要密码")`），此时会错误地把一个仍然存在、密码也正确的加密文件从最近列表里移除，并提示误导性的"文件不存在"。实际实现改为：让 `openFile` 对 `os.ReadFile` 失败这一步返回一个可用 `errors.Is` 识别的哨兵错误（`errFileUnreadable`），`Triggered` 处理器只在命中该哨兵时才移除最近列表项，其余错误（取消密码、PDF 损坏、pdfium 超时等）一律弹出通用的"无法打开文件"提示，不触碰最近列表。详见 `internal/ui/app.go` 中的 `errFileUnreadable` 及 `rebuildRecentMenu`。
+
 在 `app` 结构体中加入字段 `recentMenuAction *walk.Action`。
 
 在"文件"菜单的 `Items` 中，"打开..."之后、"关闭标签"之前插入一个 `Menu` 项：

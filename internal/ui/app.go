@@ -87,7 +87,7 @@ func Run(initialFile string) (int, error) {
 					Action{Text: "下一页", Shortcut: Shortcut{Key: walk.KeyNext}, OnTriggered: a.onNextPage},
 					Action{Text: "首页", Shortcut: Shortcut{Key: walk.KeyHome}, OnTriggered: a.onFirstPage},
 					Action{Text: "末页", Shortcut: Shortcut{Key: walk.KeyEnd}, OnTriggered: a.onLastPage},
-					Action{Text: "跳转到页面...(&G)", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyG}, OnTriggered: a.onGoToPage},
+					Action{Text: "跳转到页码...(&G)", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyG}, OnTriggered: a.onGoToPage},
 				},
 			},
 			Menu{
@@ -142,6 +142,16 @@ func (a *app) onOpenClicked() {
 	}
 }
 
+// errFileUnreadable wraps a failure to read path's bytes from disk (the very
+// first step of openFile below), so callers - specifically
+// rebuildRecentMenu's Triggered handler - can distinguish "the file itself
+// is missing/inaccessible on disk" from every other way openFile can fail
+// once the bytes were read successfully (password dialog cancelled, wrong
+// password given up on, corrupt/unparseable PDF, pdfium pool timeout, ...).
+// Only the former should evict the entry from the recent-files list; the
+// latter are unrelated to whether the file still exists.
+var errFileUnreadable = errors.New("无法读取文件")
+
 // openFile opens path and adds it as a new tab. It is reused from Task 20
 // for command-line startup, so both the Open dialog and the command-line
 // argument path share one code path.
@@ -153,7 +163,7 @@ func (a *app) onOpenClicked() {
 func (a *app) openFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", errFileUnreadable, err)
 	}
 
 	doc, err := a.pool.Open(data, nil)
@@ -659,12 +669,23 @@ func (a *app) rebuildRecentMenu() {
 		action := walk.NewAction()
 		action.SetText(path)
 		action.Triggered().Attach(func() {
-			if err := a.openFile(path); err != nil {
+			err := a.openFile(path)
+			if err == nil {
+				return
+			}
+			if errors.Is(err, errFileUnreadable) {
+				// The file itself is gone/inaccessible - evict it from the
+				// recent list. Any other openFile failure (password dialog
+				// cancelled, wrong password given up on, corrupt PDF, pool
+				// timeout, ...) is unrelated to the file's existence and
+				// must not evict a perfectly valid recent entry.
 				a.cfg.RemoveRecent(path)
 				a.cfg.Save()
 				a.rebuildRecentMenu()
 				walk.MsgBox(a.mainWindow, "文件不存在", fmt.Sprintf("无法打开 %s，已从最近列表中移除。", path), walk.MsgBoxIconWarning)
+				return
 			}
+			walk.MsgBox(a.mainWindow, "无法打开文件", err.Error(), walk.MsgBoxIconError)
 		})
 		menu.Actions().Add(action)
 	}
