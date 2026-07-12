@@ -147,3 +147,32 @@ func TestRemoveRecent_CaseInsensitive(t *testing.T) {
 		t.Fatalf("RecentFiles = %+v, want only C:\\b.pdf", cfg.RecentFiles)
 	}
 }
+
+func TestSaveThenLoad_ContinuousMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	cfg := &Config{ContinuousMode: true}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if !loaded.ContinuousMode {
+		t.Fatalf("loaded.ContinuousMode = false, want true")
+	}
+}
+
+func TestLoad_MissingFileDefaultsToSinglePageMode(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := LoadFrom(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.ContinuousMode {
+		t.Fatalf("cfg.ContinuousMode = true, want false (default is single-page mode)")
+	}
+}

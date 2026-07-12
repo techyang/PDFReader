@@ -22,11 +22,12 @@ type RecentFile struct {
 
 // Config is the persisted application state.
 type Config struct {
-	RecentFiles  []RecentFile `json:"recentFiles"`
-	WindowWidth  int          `json:"windowWidth"`
-	WindowHeight int          `json:"windowHeight"`
-	SidebarShown bool         `json:"sidebarShown"`
-	SidebarTab   string       `json:"sidebarTab"` // "outline" or "thumbnails"
+	RecentFiles    []RecentFile `json:"recentFiles"`
+	WindowWidth    int          `json:"windowWidth"`
+	WindowHeight   int          `json:"windowHeight"`
+	SidebarShown   bool         `json:"sidebarShown"`
+	SidebarTab     string       `json:"sidebarTab"` // "outline" or "thumbnails"
+	ContinuousMode bool         `json:"continuousMode"`
 }
 
 func defaultConfig() *Config {
