@@ -69,6 +69,7 @@ func Run(initialFile string) (int, error) {
 					Action{Text: "缩小", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyOEMMinus}, OnTriggered: a.onZoomOut},
 					Action{Text: "适合宽度", OnTriggered: a.onFitWidth},
 					Action{Text: "适合页面", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.Key0}, OnTriggered: a.onFitPage},
+					Action{Text: "查找", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyF}, OnTriggered: a.onToggleSearch},
 				},
 			},
 			Menu{
@@ -270,6 +271,14 @@ func (a *app) openFile(path string) error {
 	}
 	pageView.SetClearsBackground(true)
 
+	searchBar, err := a.buildSearchBar(tabPage, t)
+	if err != nil {
+		tabPage.Dispose()
+		doc.Close()
+		return err
+	}
+	_ = searchBar
+
 	if err := a.tabWidget.Pages().Add(tabPage); err != nil {
 		tabPage.Dispose()
 		doc.Close()
@@ -325,14 +334,30 @@ func (a *app) goToPage(t *tab, page int) {
 	a.statusBar.SetText(fmt.Sprintf("第 %d / %d 页", t.page+1, t.doc.PageCount()))
 }
 
-// outlineFocused reports whether t's outline tree currently has the
-// keyboard input focus. The page-navigation shortcuts below are registered
-// as bare-key accelerators (Home/End/PageUp/PageDown with no modifier), so
-// they fire on every keydown regardless of which control has focus -
-// including the outline TreeView, whose native SysTreeView32 control
-// interprets those same keys as "move tree selection". Without this guard,
-// clicking into the sidebar and pressing Home/End would both move the tree
-// selection AND change the current PDF page at the same time.
+// navInputFocused reports whether t's outline tree or search edit currently
+// has the keyboard input focus. The page-navigation shortcuts below are
+// registered as bare-key accelerators (Home/End/PageUp/PageDown with no
+// modifier), so they fire on every keydown regardless of which control has
+// focus - including the outline TreeView, whose native SysTreeView32
+// control interprets those same keys as "move tree selection", and the
+// search bar's LineEdit, whose native Edit control interprets Home/End as
+// "move text caret to start/end of line". Without this guard, clicking
+// into the sidebar (or the search box) and pressing Home/End would both
+// move the tree selection/text caret AND change the current PDF page at
+// the same time.
+//
+// Why this also applies to the search LineEdit: walk subclasses every
+// native control's window procedure via SetWindowLongPtr (see walk's
+// window.go InitWindow), routing WM_KEYDOWN through
+// WindowBase.handleKeyDown first. That function looks up the pressed key
+// combo in the package-level shortcut2Action map - which is global, not
+// scoped to whichever control has focus - and raises the matching Action's
+// OnTriggered before ever falling through to CallWindowProc, which invokes
+// the native Edit control's original window procedure (the thing that
+// actually moves the caret). So a bare Home/End keystroke while the search
+// LineEdit is focused triggers both effects: the menu-registered PDF page
+// jump fires first, and the native caret movement happens afterward
+// regardless.
 //
 // This guard is only applied to the keyboard-accelerator path
 // (onPrevPage/onNextPage/onFirstPage/onLastPage below, wired to the
@@ -341,22 +366,27 @@ func (a *app) goToPage(t *tab, page int) {
 // an explicit mouse click is never the redundant-double-fire scenario this
 // guard exists for, and applying it there previously caused the toolbar
 // buttons to silently do nothing whenever the outline tree had focus
-// (including via plain Tab-key cycling, even with an empty outline).
+// (including via plain Tab-key cycling, even with an empty outline). The
+// same reasoning extends to the search box.
 //
 // One known, accepted limitation: because walk ties a menu item's
 // OnTriggered to the same Action as its Shortcut, there is no way to let an
 // explicit mouse click on the "上一页"/"下一页" *menu item* bypass this
 // guard while still blocking the keyboard accelerator - both go through the
 // same guarded handler. This is considered acceptable since clicking the
-// menu item while the tree has focus is a much rarer path than the
-// toolbar/Tab-cycling case.
-func outlineFocused(t *tab) bool {
-	return t != nil && t.outlineTree != nil && t.outlineTree.Focused()
+// menu item while the tree/search box has focus is a much rarer path than
+// the toolbar/Tab-cycling case.
+func navInputFocused(t *tab) bool {
+	if t == nil {
+		return false
+	}
+	return (t.outlineTree != nil && t.outlineTree.Focused()) ||
+		(t.searchEdit != nil && t.searchEdit.Focused())
 }
 
 func (a *app) onPrevPage() {
 	t := a.currentTab()
-	if t == nil || outlineFocused(t) {
+	if t == nil || navInputFocused(t) {
 		return
 	}
 	a.goToPage(t, t.page-1)
@@ -364,7 +394,7 @@ func (a *app) onPrevPage() {
 
 func (a *app) onNextPage() {
 	t := a.currentTab()
-	if t == nil || outlineFocused(t) {
+	if t == nil || navInputFocused(t) {
 		return
 	}
 	a.goToPage(t, t.page+1)
@@ -372,7 +402,7 @@ func (a *app) onNextPage() {
 
 func (a *app) onFirstPage() {
 	t := a.currentTab()
-	if t == nil || outlineFocused(t) {
+	if t == nil || navInputFocused(t) {
 		return
 	}
 	a.goToPage(t, 0)
@@ -380,15 +410,15 @@ func (a *app) onFirstPage() {
 
 func (a *app) onLastPage() {
 	t := a.currentTab()
-	if t == nil || outlineFocused(t) {
+	if t == nil || navInputFocused(t) {
 		return
 	}
 	a.goToPage(t, t.doc.PageCount()-1)
 }
 
 // onPrevPageToolbar and onNextPageToolbar back the toolbar's ◀/▶ buttons.
-// They intentionally skip the outlineFocused guard applied to
-// onPrevPage/onNextPage above - see the comment on outlineFocused for why.
+// They intentionally skip the navInputFocused guard applied to
+// onPrevPage/onNextPage above - see the comment on navInputFocused for why.
 func (a *app) onPrevPageToolbar() {
 	t := a.currentTab()
 	if t == nil {
@@ -446,6 +476,18 @@ func (a *app) onFitWidth() {
 func (a *app) onFitPage() {
 	if t := a.currentTab(); t != nil {
 		a.setZoom(t, document.Zoom{Mode: document.ZoomFitPage})
+	}
+}
+
+func (a *app) onToggleSearch() {
+	t := a.currentTab()
+	if t == nil || t.searchBar == nil {
+		return
+	}
+	visible := !t.searchBar.Visible()
+	t.searchBar.SetVisible(visible)
+	if visible {
+		t.searchEdit.SetFocus()
 	}
 }
 

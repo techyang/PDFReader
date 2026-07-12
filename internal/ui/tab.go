@@ -22,6 +22,12 @@ type tab struct {
 	tabPage     *walk.TabPage
 	pageView    *walk.CustomWidget
 	outlineTree *walk.TreeView
+
+	searchMatches []pdfengine.SearchMatch
+	searchIndex   int // index into searchMatches of the currently-highlighted match
+
+	searchBar  *walk.Composite
+	searchEdit *walk.LineEdit
 }
 
 func newTab(path string, doc *pdfengine.Document) *tab {
