@@ -403,7 +403,15 @@ func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle)
 	}
 	defer bmp.Dispose()
 
-	return canvas.DrawImage(bmp, walk.Point{X: 0, Y: 0})
+	// Center the rendered page within the viewport - it's only exactly
+	// as wide/tall as the viewport in ZoomFitWidth/ZoomFitPage; ZoomPercent
+	// and any rounding slack in the other two modes leave a margin that
+	// otherwise always collects in the bottom-right corner.
+	size := bmp.Size()
+	x := (bounds.Width - size.Width) / 2
+	y := (bounds.Height - size.Height) / 2
+
+	return canvas.DrawImage(bmp, walk.Point{X: x, Y: y})
 }
 
 func (a *app) currentTab() *tab {
