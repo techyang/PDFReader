@@ -100,7 +100,7 @@ func Run(initialFile string) (int, error) {
 		ToolBar: ToolBar{
 			ButtonStyle: ToolBarButtonTextOnly,
 			Items: []MenuItem{
-				Action{Text: "打开", OnTriggered: a.onOpenClicked},
+				Action{Text: "📂", OnTriggered: a.onOpenClicked},
 				Separator{},
 				Action{Text: "◀", OnTriggered: a.onPrevPageToolbar},
 				Action{Text: "▶", OnTriggered: a.onNextPageToolbar},
