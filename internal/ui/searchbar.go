@@ -37,6 +37,8 @@ func (a *app) buildSearchBar(parent walk.Container, t *tab) (*walk.Composite, er
 		}
 		matches, err := t.doc.Search(query)
 		if err != nil {
+			t.searchMatches = nil
+			t.searchIndex = 0
 			status.SetText("搜索出错")
 			return
 		}
