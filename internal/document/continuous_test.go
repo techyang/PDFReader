@@ -69,3 +69,73 @@ func TestLayoutContinuous_ZoomChangeScalesTotalHeight(t *testing.T) {
 		t.Fatalf("totalBig = %v, totalSmall = %v, want totalBig much larger", totalBig, totalSmall)
 	}
 }
+
+func TestVisiblePages_ViewportSpanningMultiplePages(t *testing.T) {
+	layouts := []PageLayout{
+		{Top: 0, Height: 100},
+		{Top: 108, Height: 100}, // 8px gap
+		{Top: 216, Height: 100},
+		{Top: 324, Height: 100},
+	}
+
+	start, end := VisiblePages(layouts, 150, 120) // viewport [150,270): touches pages 1,2
+
+	if start != 1 || end != 3 {
+		t.Fatalf("VisiblePages = [%d,%d), want [1,3)", start, end)
+	}
+}
+
+func TestVisiblePages_GapOnlyViewportIsEmpty(t *testing.T) {
+	layouts := []PageLayout{
+		{Top: 0, Height: 100},
+		{Top: 108, Height: 100},
+	}
+
+	// viewport [100,108) sits entirely in the gap between the two pages.
+	start, end := VisiblePages(layouts, 100, 8)
+
+	if start != end {
+		t.Fatalf("VisiblePages = [%d,%d), want an empty range in the gap", start, end)
+	}
+}
+
+func TestVisiblePages_EmptyLayouts(t *testing.T) {
+	start, end := VisiblePages(nil, 0, 100)
+	if start != 0 || end != 0 {
+		t.Fatalf("VisiblePages(nil) = [%d,%d), want [0,0)", start, end)
+	}
+}
+
+func TestMostVisiblePage_PicksLargerOverlap(t *testing.T) {
+	layouts := []PageLayout{
+		{Top: 0, Height: 100},
+		{Top: 108, Height: 100},
+	}
+
+	// viewport [80,188): page 0 shows 20px (80..100), page 1 shows 80px (108..188).
+	got := MostVisiblePage(layouts, 80, 108)
+
+	if got != 1 {
+		t.Fatalf("MostVisiblePage = %d, want 1", got)
+	}
+}
+
+func TestMostVisiblePage_TieBreaksToEarlierPage(t *testing.T) {
+	layouts := []PageLayout{
+		{Top: 0, Height: 100},
+		{Top: 100, Height: 100},
+	}
+
+	// viewport [50,150): both pages show exactly 50px.
+	got := MostVisiblePage(layouts, 50, 100)
+
+	if got != 0 {
+		t.Fatalf("MostVisiblePage = %d, want 0 (tie -> earlier page)", got)
+	}
+}
+
+func TestMostVisiblePage_EmptyLayouts(t *testing.T) {
+	if got := MostVisiblePage(nil, 0, 100); got != 0 {
+		t.Fatalf("MostVisiblePage(nil) = %d, want 0", got)
+	}
+}

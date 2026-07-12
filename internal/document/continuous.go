@@ -38,3 +38,59 @@ func LayoutContinuous(pageSizesPt [][2]float64, zoom Zoom, viewportWidthPx, gapP
 	}
 	return layouts, total
 }
+
+// VisiblePages returns the [start,end) index range (into layouts) of
+// pages that intersect the vertical range [scrollTop, scrollTop+viewportHeight).
+// Pages that only touch the range at an edge (no interior overlap) don't
+// count. Returns (0, 0) if layouts is empty or nothing intersects.
+func VisiblePages(layouts []PageLayout, scrollTop, viewportHeight float64) (start, end int) {
+	scrollBottom := scrollTop + viewportHeight
+	start = -1
+	for i, l := range layouts {
+		pageBottom := l.Top + l.Height
+		if pageBottom <= scrollTop {
+			continue
+		}
+		if l.Top >= scrollBottom {
+			break
+		}
+		if start == -1 {
+			start = i
+		}
+		end = i + 1
+	}
+	if start == -1 {
+		return 0, 0
+	}
+	return start, end
+}
+
+// MostVisiblePage returns the index into layouts of the page covering
+// the largest visible area within [scrollTop, scrollTop+viewportHeight).
+// Returns 0 if layouts is empty. Ties resolve to the earlier (smaller
+// index) page.
+func MostVisiblePage(layouts []PageLayout, scrollTop, viewportHeight float64) int {
+	if len(layouts) == 0 {
+		return 0
+	}
+	scrollBottom := scrollTop + viewportHeight
+	best := 0
+	bestVisible := -1.0
+	for i, l := range layouts {
+		pageBottom := l.Top + l.Height
+		visibleTop := l.Top
+		if scrollTop > visibleTop {
+			visibleTop = scrollTop
+		}
+		visibleBottom := pageBottom
+		if scrollBottom < visibleBottom {
+			visibleBottom = scrollBottom
+		}
+		visible := visibleBottom - visibleTop
+		if visible > bestVisible {
+			bestVisible = visible
+			best = i
+		}
+	}
+	return best
+}
