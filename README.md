@@ -1,0 +1,64 @@
+# PDF 阅读器
+
+基于 [lxn/walk](https://github.com/lxn/walk) 和 [go-pdfium](https://github.com/klippa-app/go-pdfium)（WebAssembly 模式）实现的 Windows 桌面 PDF 阅读器。
+
+## 功能
+
+- 打开 / 浏览 PDF，支持多标签页
+- 翻页（上一页/下一页/首页/末页）与快捷键导航
+- 缩放（放大/缩小/适合宽度/适合页面）
+- 目录大纲侧边栏，点击书签跳转
+- 缩略图侧边栏，点击缩略图跳转
+- 全文查找，支持上一个/下一个匹配循环
+- 最近打开的文件菜单（持久化，文件被删除后自动从列表移除）
+- 加密 PDF 密码打开（密码错误可重试）
+- 跳转到指定页码 / 关于对话框
+- 命令行参数打开指定文件
+
+## 构建
+
+需要 Go >= 1.25（工具链会通过 `GOTOOLCHAIN=auto` 自动下载，需要网络）。本机若只有 32 位 Go（`windows/386`），交叉编译到 64 位即可，无需额外安装 C 编译器：
+
+```bash
+GOARCH=amd64 GOOS=windows go build -ldflags "-H=windowsgui" -o pdfreader.exe .
+```
+
+`-H=windowsgui` 让可执行文件以 GUI 子系统运行，双击或从命令行启动都不会弹出多余的控制台窗口；省略这个参数编译出来的 exe 也能正常工作，只是每次启动都会带一个黑色 cmd 窗口。
+
+首次构建前需生成 Windows 资源（图标 + DPI 感知 manifest），见 `winres/winres.json`，或直接使用仓库中已提交的 `rsrc_windows_amd64.syso`（图标/manifest 不变的情况下无需重新生成）。若需要重新生成：
+
+```bash
+go install github.com/tc-hib/go-winres@latest
+go-winres make --arch amd64
+```
+
+## 运行
+
+```bash
+./pdfreader.exe                    # 打开空窗口
+./pdfreader.exe path\to\file.pdf   # 启动时直接打开指定文件
+```
+
+## 测试
+
+自动化测试覆盖 `internal/pdfengine`、`internal/config`、`internal/document`：
+
+```bash
+GOARCH=amd64 GOOS=windows go test ./...
+```
+
+UI 交互（`internal/ui`）没有可用于无头环境的控件模拟点击机制，需人工走查下面的手动测试清单。
+
+## 手动测试清单
+
+- [ ] 打开未加密 PDF，正确显示第一页
+- [ ] 上一页/下一页/首页/末页导航，边界不越界
+- [ ] 缩放：放大、缩小到上下限、适合宽度、适合页面
+- [ ] 目录大纲：点击书签跳转到对应页
+- [ ] 缩略图：点击缩略图跳转到对应页
+- [ ] 查找：输入关键词、上一个/下一个匹配循环、无结果提示
+- [ ] 多标签页：打开多个文档，各自状态独立；Ctrl+W 与右键菜单关闭标签
+- [ ] 最近打开的文件：重启后仍保留，点击可直接打开，文件被删除后自动从列表移除
+- [ ] 加密 PDF：密码正确可打开，密码错误有明确提示，可重试
+- [ ] 命令行参数打开指定 PDF
+- [ ] 高 DPI 显示器（或系统缩放 125%/150%）下界面不糊、不错位
