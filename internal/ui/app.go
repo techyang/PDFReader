@@ -576,7 +576,16 @@ func (a *app) goToPage(t *tab, page int) {
 		page = last
 	}
 	t.page = page
-	t.pageView.Invalidate()
+
+	if a.cfg.ContinuousMode {
+		viewport := t.pageScroll.ClientBoundsPixels()
+		if err := ensureContinuousLayout(t, float64(viewport.Width)); err == nil && page < len(t.continuousLayout) {
+			setContinuousScrollY(t.pageScroll, t.pageView, t.continuousLayout[page].Top, t.continuousTotalH)
+		}
+	} else {
+		t.pageView.Invalidate()
+	}
+
 	a.statusBar.SetText(fmt.Sprintf("第 %d / %d 页", t.page+1, t.doc.PageCount()))
 }
 
@@ -685,7 +694,27 @@ func (a *app) setZoom(t *tab, z document.Zoom) {
 	if t == nil {
 		return
 	}
+	if a.cfg.ContinuousMode && z.Mode == document.ZoomFitPage {
+		z = document.Zoom{Mode: document.ZoomFitWidth} // fit-page is meaningless once many pages are visible at once
+	}
+
+	anchorPage := t.page
 	t.zoom = z
+
+	if a.cfg.ContinuousMode {
+		viewport := t.pageScroll.ClientBoundsPixels()
+		t.continuousLayout = nil // force a recompute at the new zoom
+		if err := ensureContinuousLayout(t, float64(viewport.Width)); err == nil && anchorPage < len(t.continuousLayout) {
+			// Simplification: scroll back to the top of the page that was
+			// current before the zoom change, rather than preserving the
+			// exact pixel offset within that page - keeping the fractional
+			// scroll position pixel-perfect across a zoom change would need
+			// converting it through the old and new scale factors for
+			// marginal benefit.
+			setContinuousScrollY(t.pageScroll, t.pageView, t.continuousLayout[anchorPage].Top, t.continuousTotalH)
+		}
+	}
+
 	t.pageView.Invalidate()
 }
 
