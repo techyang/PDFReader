@@ -25,7 +25,9 @@ type app struct {
 	tabWidget  *walk.TabWidget
 	statusBar  *walk.StatusBarItem
 
-	recentMenuAction *walk.Action
+	recentMenuAction     *walk.Action
+	continuousModeAction *walk.Action
+	fitPageAction        *walk.Action
 
 	tabs []*tab
 }
@@ -76,8 +78,10 @@ func Run(initialFile string) (int, error) {
 					Action{Text: "放大", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyOEMPlus}, OnTriggered: a.onZoomIn},
 					Action{Text: "缩小", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyOEMMinus}, OnTriggered: a.onZoomOut},
 					Action{Text: "适合宽度", OnTriggered: a.onFitWidth},
-					Action{Text: "适合页面", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.Key0}, OnTriggered: a.onFitPage},
+					Action{Text: "适合页面", AssignTo: &a.fitPageAction, Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.Key0}, OnTriggered: a.onFitPage},
 					Action{Text: "查找", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyF}, OnTriggered: a.onToggleSearch},
+					Separator{},
+					Action{Text: "连续阅读模式", AssignTo: &a.continuousModeAction, Checkable: true, Checked: a.cfg.ContinuousMode, OnTriggered: a.onToggleContinuousMode},
 				},
 			},
 			Menu{
@@ -120,6 +124,7 @@ func Run(initialFile string) (int, error) {
 		return 1, err
 	}
 	a.rebuildRecentMenu()
+	a.fitPageAction.SetEnabled(!a.cfg.ContinuousMode)
 	if initialFile != "" {
 		if err := a.openFile(initialFile); err != nil {
 			walk.MsgBox(a.mainWindow, "无法打开文件", err.Error(), walk.MsgBoxIconError)
@@ -755,6 +760,22 @@ func (a *app) onFitWidth() {
 func (a *app) onFitPage() {
 	if t := a.currentTab(); t != nil {
 		a.setZoom(t, document.Zoom{Mode: document.ZoomFitPage})
+	}
+}
+
+// onToggleContinuousMode flips the global continuous-reading-mode
+// setting (all tabs share one mode), persists it, and re-applies it to
+// every currently open tab.
+func (a *app) onToggleContinuousMode() {
+	a.cfg.ContinuousMode = a.continuousModeAction.Checked()
+	a.cfg.Save()
+	a.fitPageAction.SetEnabled(!a.cfg.ContinuousMode)
+
+	for _, t := range a.tabs {
+		if a.cfg.ContinuousMode && t.zoom.Mode == document.ZoomFitPage {
+			t.zoom = document.Zoom{Mode: document.ZoomFitWidth}
+		}
+		a.applyPageViewMode(t)
 	}
 }
 
