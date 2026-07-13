@@ -245,6 +245,17 @@ func (a *app) openFile(path string) error {
 		return err
 	}
 	sidebarComposite.SetLayout(walk.NewVBoxLayout())
+	// Hard cap the sidebar's width regardless of what's driving it wide -
+	// stretch factors and scrollbar-growability only ever influence how
+	// *extra* space beyond each pane's own minimum gets distributed; they
+	// can't override a legitimately larger minimum. A long unwrapped
+	// outline entry (bookmarks/outline titles don't wrap in a TreeView)
+	// can make the tree - and therefore sidebarComposite - report a huge
+	// natural minimum width, which the splitter then honors regardless of
+	// the 1:4 stretch factor set below. Capping it here is a hard
+	// guarantee independent of exactly which layout mechanism would
+	// otherwise let it grow.
+	sidebarComposite.SetMinMaxSize(walk.Size{}, walk.Size{Width: 320})
 
 	sidebarTabs, err := walk.NewTabWidget(sidebarComposite)
 	if err != nil {
