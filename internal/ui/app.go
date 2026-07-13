@@ -525,6 +525,9 @@ func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle)
 // whichever page is now most visible.
 func (a *app) paintContinuousTab(t *tab, canvas *walk.Canvas) error {
 	viewport := t.pageScroll.ClientBoundsPixels()
+	if viewport.Width <= 0 || viewport.Height <= 0 {
+		return nil // not laid out yet - nothing sensible to render
+	}
 	if err := ensureContinuousLayout(t, float64(viewport.Width)); err != nil {
 		return canvas.DrawText(err.Error(), nil, walk.RGB(200, 0, 0), viewport, walk.TextWordbreak)
 	}
