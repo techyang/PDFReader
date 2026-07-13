@@ -354,7 +354,17 @@ func (a *app) openFile(path string) error {
 		doc.Close()
 		return err
 	}
-	pageScroll.SetScrollbars(false, true) // no horizontal bar; the vertical one only does anything in continuous mode
+	// Both scrollbars enabled - NOT just "false, true" for horizontal-off.
+	// walk.ScrollView's CreateLayoutItem (scrollview.go) only grants a
+	// ScrollView GrowableHorz/ShrinkableHorz layout flags when its
+	// horizontal scrollbar is enabled; with it disabled, the splitter's
+	// layout clamps pageScroll to its tiny "ideal" width instead of the
+	// stretch-factor share set below, and every extra pixel piles onto
+	// sidebarComposite instead - which is what made the sidebar swallow
+	// the entire window. Keeping the horizontal bar enabled also means a
+	// page wider than the viewport (zoomed in past 100%, or in continuous
+	// mode) can actually be scrolled to instead of just clipping.
+	pageScroll.SetScrollbars(true, true)
 
 	pageView, err := walk.NewCustomWidget(pageScroll, 0, func(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 		return a.paintTab(t, canvas, updateBounds)
