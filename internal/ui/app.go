@@ -467,14 +467,24 @@ func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle)
 
 	// pageView's size is normally kept in sync with the viewport by
 	// applyPageViewMode, triggered off pageScroll's SizeChanged event. But
-	// the very first paint of a freshly created tab can land before that
-	// event has fired even once (widget creation vs. layout ordering), in
-	// which case pageView is still at whatever size walk.NewCustomWidget
-	// gave it by default - not the real viewport. Re-checking here closes
-	// that race without depending on event timing.
+	// the very first paint of a freshly created tab - especially one opened
+	// via the command-line argument, which happens before the main window
+	// is even shown - can land before that event has fired even once
+	// (widget creation vs. layout ordering), leaving pageView at whatever
+	// size walk.NewCustomWidget gave it by default, not the real viewport.
+	//
+	// Resizing here and then drawing in the same pass doesn't fully fix
+	// that: this paint's canvas is a device context clipped to the OLD
+	// (possibly zero) size, established before WM_PAINT reached us, and
+	// resizing mid-paint doesn't retroactively widen that clip - the draw
+	// call below would silently do nothing. So instead: resize, invalidate
+	// to schedule a follow-up paint against the corrected size, and bail
+	// out of this one without drawing.
 	if viewport := t.pageScroll.ClientBoundsPixels(); viewport.Width > 0 && viewport.Height > 0 {
 		if cur := t.pageView.SizePixels(); cur.Width != viewport.Width || cur.Height != viewport.Height {
 			t.pageView.SetSizePixels(walk.Size{Width: viewport.Width, Height: viewport.Height})
+			t.pageView.Invalidate()
+			return nil
 		}
 	}
 
