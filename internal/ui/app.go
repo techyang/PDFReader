@@ -4,6 +4,8 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"os"
 
 	"github.com/klippa-app/go-pdfium"
@@ -14,6 +16,26 @@ import (
 	"pdfreader/internal/document"
 	"pdfreader/internal/pdfengine"
 )
+
+// debugLog is a TEMPORARY diagnostic aid for tracking down the
+// sidebar-swallows-the-window layout bug - writes to pdfreader-debug.log
+// next to the exe (stdout/stderr aren't reliably usable here: the exe is
+// built -H=windowsgui, see fixStdHandles in main.go) so actual measured
+// widget sizes can be inspected after a run instead of guessed from
+// reading walk's layout source. Remove once the bug is confirmed fixed.
+var debugLog = log.New(io.Discard, "", 0)
+
+func initDebugLog() {
+	path := "pdfreader-debug.log"
+	if exe, err := os.Executable(); err == nil {
+		path = exe + "-debug.log" // next to the exe, independent of CWD (double-click vs. shell)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return
+	}
+	debugLog = log.New(f, "", log.Ltime|log.Lmicroseconds)
+}
 
 // app is the single running instance of the UI, owning the pdfium pool,
 // the persisted config, the main window and all open tabs.
@@ -38,6 +60,8 @@ var _ = pdfium.Pdfium(nil) // keep import used until pool wiring lands in later 
 // initialFile may be empty; if set, it is opened as the first tab on
 // startup (see Task 20).
 func Run(initialFile string) (int, error) {
+	initDebugLog()
+
 	pool, err := pdfengine.NewPool()
 	if err != nil {
 		return 1, err
@@ -131,6 +155,11 @@ func Run(initialFile string) (int, error) {
 		}
 	}
 	a.mainWindow.Show()
+	debugLog.Printf("after Show(): mainWindow=%v tabWidget=%v", a.mainWindow.BoundsPixels(), a.tabWidget.BoundsPixels())
+	if len(a.tabs) > 0 {
+		t0 := a.tabs[0]
+		debugLog.Printf("after Show(): tab0 splitter=n/a sidebarPageScroll=%v pageView=%v", t0.pageScroll.BoundsPixels(), t0.pageView.BoundsPixels())
+	}
 	return a.mainWindow.Run(), nil
 }
 
@@ -397,12 +426,22 @@ func (a *app) openFile(path string) error {
 		SetStretchFactor(widget walk.Widget, factor int) error
 	}
 	if sfs, ok := splitter.Layout().(stretchFactorSetter); ok {
-		sfs.SetStretchFactor(sidebarComposite, 1)
-		sfs.SetStretchFactor(pageScroll, 4)
+		if err := sfs.SetStretchFactor(sidebarComposite, 1); err != nil {
+			debugLog.Printf("SetStretchFactor(sidebarComposite, 1) error: %v", err)
+		}
+		if err := sfs.SetStretchFactor(pageScroll, 4); err != nil {
+			debugLog.Printf("SetStretchFactor(pageScroll, 4) error: %v", err)
+		}
+	} else {
+		debugLog.Printf("splitter.Layout() does NOT satisfy stretchFactorSetter, type = %T", splitter.Layout())
 	}
+	debugLog.Printf("after stretch factor: splitter=%v sidebarComposite=%v pageScroll=%v sidebarMax=%v",
+		splitter.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), sidebarComposite.MaxSizePixels())
 
 	t.pageScroll = pageScroll
 	pageScroll.SizeChanged().Attach(func() {
+		debugLog.Printf("pageScroll.SizeChanged: splitter=%v sidebarComposite=%v pageScroll=%v pageView=%v",
+			splitter.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), pageView.BoundsPixels())
 		a.applyPageViewMode(t)
 	})
 
@@ -464,6 +503,7 @@ func (a *app) applyPageViewMode(t *tab) {
 		return
 	}
 	viewport := t.pageScroll.ClientBoundsPixels()
+	debugLog.Printf("applyPageViewMode: path=%s pageScrollViewport=%v continuousMode=%v", t.path, viewport, a.cfg.ContinuousMode)
 	if viewport.Width <= 0 || viewport.Height <= 0 {
 		return
 	}
@@ -482,6 +522,9 @@ func (a *app) applyPageViewMode(t *tab) {
 }
 
 func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle) error {
+	debugLog.Printf("paintTab called: path=%s updateBounds=%v pageScrollClientBoundsPixels=%v pageScrollBoundsPixels=%v pageViewSizePixels=%v continuousMode=%v",
+		t.path, updateBounds, t.pageScroll.ClientBoundsPixels(), t.pageScroll.BoundsPixels(), t.pageView.SizePixels(), a.cfg.ContinuousMode)
+
 	if a.cfg.ContinuousMode {
 		return a.paintContinuousTab(t, canvas)
 	}
