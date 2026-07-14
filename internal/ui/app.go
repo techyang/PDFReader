@@ -288,17 +288,22 @@ func (a *app) openFile(path string) error {
 		debugLog.Printf("sidebarComposite.SizeChanged: splitter=%v sidebarComposite=%v", splitter.BoundsPixels(), sidebarComposite.BoundsPixels())
 	})
 	sidebarComposite.SetLayout(walk.NewVBoxLayout())
-	// Hard cap the sidebar's width regardless of what's driving it wide -
-	// stretch factors and scrollbar-growability only ever influence how
-	// *extra* space beyond each pane's own minimum gets distributed; they
-	// can't override a legitimately larger minimum. A long unwrapped
-	// outline entry (bookmarks/outline titles don't wrap in a TreeView)
-	// can make the tree - and therefore sidebarComposite - report a huge
-	// natural minimum width, which the splitter then honors regardless of
-	// the 1:4 stretch factor set below. Capping it here is a hard
-	// guarantee independent of exactly which layout mechanism would
-	// otherwise let it grow.
+	// Diagnostic logging (2026-07-14) showed sidebarComposite's *effective
+	// natural minimum width* being computed as ~956px out of a ~961px wide
+	// splitter - i.e. splitterContainerLayoutItem.reset() floors it to
+	// something close to the full splitter width before stretch factors are
+	// even applied, and neither SetMinMaxSize's Max nor the 1:4 stretch
+	// factor (both only influence the *flexible* distribution step) can
+	// override that floor. Pinning the width explicitly and marking it
+	// Fixed sidesteps that computation entirely: a Fixed splitter child's
+	// contribution to layout is just its own current BoundsPixels (see
+	// splitterLayout.PerformLayout's `anyNonFixed`/`sli.fixed` branch), so
+	// pageScroll - the only non-fixed child - simply gets 100% of whatever
+	// space remains. SetMinMaxSize is kept as the drag-resize boundary for
+	// when the user manually drags the splitter handle.
 	sidebarComposite.SetMinMaxSize(walk.Size{}, walk.Size{Width: 320})
+	sidebarComposite.SetWidth(240)
+	splitter.SetFixed(sidebarComposite, true)
 
 	sidebarTabs, err := walk.NewTabWidget(sidebarComposite)
 	if err != nil {
@@ -430,26 +435,11 @@ func (a *app) openFile(path string) error {
 	}
 	pageView.SetClearsBackground(true)
 
-	// Give the page view most of the splitter's width by default - an
-	// outline/thumbnails sidebar only needs enough room to read titles or
-	// see a thumbnail, not half the window. stretchFactor is unexported on
-	// splitterLayout, but it satisfies this method set (same pattern
-	// declarative/builder.go uses for its StretchFactor field), so a local
-	// interface is enough to reach it without walk exporting the type.
-	type stretchFactorSetter interface {
-		SetStretchFactor(widget walk.Widget, factor int) error
-	}
-	if sfs, ok := splitter.Layout().(stretchFactorSetter); ok {
-		if err := sfs.SetStretchFactor(sidebarComposite, 1); err != nil {
-			debugLog.Printf("SetStretchFactor(sidebarComposite, 1) error: %v", err)
-		}
-		if err := sfs.SetStretchFactor(pageScroll, 4); err != nil {
-			debugLog.Printf("SetStretchFactor(pageScroll, 4) error: %v", err)
-		}
-	} else {
-		debugLog.Printf("splitter.Layout() does NOT satisfy stretchFactorSetter, type = %T", splitter.Layout())
-	}
-	debugLog.Printf("after stretch factor: splitter=%v sidebarComposite=%v pageScroll=%v sidebarMax=%v",
+	// pageView (inside pageScroll) gets the rest of the splitter's width -
+	// sidebarComposite is pinned to a fixed width above (splitter.SetFixed),
+	// so pageScroll, as the only non-fixed splitter child, automatically
+	// absorbs 100% of whatever space remains. No stretch factor needed.
+	debugLog.Printf("after sidebar pinned: splitter=%v sidebarComposite=%v pageScroll=%v sidebarMax=%v",
 		splitter.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), sidebarComposite.MaxSizePixels())
 
 	t.pageScroll = pageScroll
