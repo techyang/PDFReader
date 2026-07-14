@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"time"
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/lxn/walk"
@@ -147,6 +148,9 @@ func Run(initialFile string) (int, error) {
 	if err := mw.Create(); err != nil {
 		return 1, err
 	}
+	a.tabWidget.SizeChanged().Attach(func() {
+		debugLog.Printf("tabWidget.SizeChanged: mainWindow=%v tabWidget=%v", a.mainWindow.BoundsPixels(), a.tabWidget.BoundsPixels())
+	})
 	a.rebuildRecentMenu()
 	a.fitPageAction.SetEnabled(!a.cfg.ContinuousMode)
 	if initialFile != "" {
@@ -260,12 +264,19 @@ func (a *app) openFile(path string) error {
 
 	tabPage.SetLayout(walk.NewVBoxLayout())
 
+	tabPage.SizeChanged().Attach(func() {
+		debugLog.Printf("tabPage.SizeChanged: tabPage=%v", tabPage.BoundsPixels())
+	})
+
 	splitter, err := walk.NewHSplitter(tabPage)
 	if err != nil {
 		tabPage.Dispose()
 		doc.Close()
 		return err
 	}
+	splitter.SizeChanged().Attach(func() {
+		debugLog.Printf("splitter.SizeChanged: tabPage=%v splitter=%v", tabPage.BoundsPixels(), splitter.BoundsPixels())
+	})
 
 	sidebarComposite, err := walk.NewComposite(splitter)
 	if err != nil {
@@ -273,6 +284,9 @@ func (a *app) openFile(path string) error {
 		doc.Close()
 		return err
 	}
+	sidebarComposite.SizeChanged().Attach(func() {
+		debugLog.Printf("sidebarComposite.SizeChanged: splitter=%v sidebarComposite=%v", splitter.BoundsPixels(), sidebarComposite.BoundsPixels())
+	})
 	sidebarComposite.SetLayout(walk.NewVBoxLayout())
 	// Hard cap the sidebar's width regardless of what's driving it wide -
 	// stretch factors and scrollbar-growability only ever influence how
@@ -483,6 +497,18 @@ func (a *app) openFile(path string) error {
 		t.zoom = document.Zoom{Mode: document.ZoomFitWidth}
 	}
 	a.applyPageViewMode(t)
+
+	// TEMPORARY: snapshot the whole bounds chain ~2s after open,
+	// independent of whether any SizeChanged event fired - this tells us
+	// whether the layout ever actually settles, decoupled from whatever
+	// event we're (maybe wrongly) relying on elsewhere in this file.
+	go func() {
+		time.Sleep(2 * time.Second)
+		a.mainWindow.Synchronize(func() {
+			debugLog.Printf("2s-later snapshot: mainWindow=%v tabWidget=%v tabPage=%v splitter=%v sidebarComposite=%v pageScroll=%v pageView=%v",
+				a.mainWindow.BoundsPixels(), a.tabWidget.BoundsPixels(), tabPage.BoundsPixels(), splitter.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), pageView.BoundsPixels())
+		})
+	}()
 
 	return nil
 }
