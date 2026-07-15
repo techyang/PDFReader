@@ -268,42 +268,46 @@ func (a *app) openFile(path string) error {
 		debugLog.Printf("tabPage.SizeChanged: tabPage=%v", tabPage.BoundsPixels())
 	})
 
-	splitter, err := walk.NewHSplitter(tabPage)
+	// Plain HBox composite, NOT HSplitter. Diagnostic logging (2026-07-14)
+	// traced the "sidebar swallows the window" bug all the way into
+	// walk's splitterLayout: splitterContainerLayoutItem.reset() - which
+	// runs on every relayout after a widget insertion - recomputes every
+	// child's size by stretch-factor proportion UNCONDITIONALLY, ignoring
+	// the Fixed flag entirely (Fixed only affects a later, conditional
+	// redistribution-of-leftover-space step). Since sidebarComposite's
+	// TreeView child reports a greedy/growable layout item, every reset()
+	// pulled the sidebar back out to nearly the splitter's full width -
+	// neither SetStretchFactor nor Splitter.SetFixed can prevent this in
+	// this walk version. A plain HBoxLayout has no such reset step: its
+	// boxLayoutItems sizing (boxlayout.go) reads each child's
+	// geometry.MaxSize directly on every layout pass, so pinning
+	// sidebarComposite's Min and Max to the same width below is a real,
+	// stable cap. Trade-off: no more drag-to-resize handle between the
+	// panes (Splitter-only feature) - acceptable since SetFixed had
+	// already disabled dragging for the sidebar before this change.
+	content, err := walk.NewComposite(tabPage)
 	if err != nil {
 		tabPage.Dispose()
 		doc.Close()
 		return err
 	}
-	splitter.SizeChanged().Attach(func() {
-		debugLog.Printf("splitter.SizeChanged: tabPage=%v splitter=%v", tabPage.BoundsPixels(), splitter.BoundsPixels())
+	content.SetLayout(walk.NewHBoxLayout())
+	content.SizeChanged().Attach(func() {
+		debugLog.Printf("content.SizeChanged: tabPage=%v content=%v", tabPage.BoundsPixels(), content.BoundsPixels())
 	})
 
-	sidebarComposite, err := walk.NewComposite(splitter)
+	sidebarComposite, err := walk.NewComposite(content)
 	if err != nil {
 		tabPage.Dispose()
 		doc.Close()
 		return err
 	}
 	sidebarComposite.SizeChanged().Attach(func() {
-		debugLog.Printf("sidebarComposite.SizeChanged: splitter=%v sidebarComposite=%v", splitter.BoundsPixels(), sidebarComposite.BoundsPixels())
+		debugLog.Printf("sidebarComposite.SizeChanged: content=%v sidebarComposite=%v", content.BoundsPixels(), sidebarComposite.BoundsPixels())
 	})
 	sidebarComposite.SetLayout(walk.NewVBoxLayout())
-	// Diagnostic logging (2026-07-14) showed sidebarComposite's *effective
-	// natural minimum width* being computed as ~956px out of a ~961px wide
-	// splitter - i.e. splitterContainerLayoutItem.reset() floors it to
-	// something close to the full splitter width before stretch factors are
-	// even applied, and neither SetMinMaxSize's Max nor the 1:4 stretch
-	// factor (both only influence the *flexible* distribution step) can
-	// override that floor. Pinning the width explicitly and marking it
-	// Fixed sidesteps that computation entirely: a Fixed splitter child's
-	// contribution to layout is just its own current BoundsPixels (see
-	// splitterLayout.PerformLayout's `anyNonFixed`/`sli.fixed` branch), so
-	// pageScroll - the only non-fixed child - simply gets 100% of whatever
-	// space remains. SetMinMaxSize is kept as the drag-resize boundary for
-	// when the user manually drags the splitter handle.
-	sidebarComposite.SetMinMaxSize(walk.Size{}, walk.Size{Width: 320})
-	sidebarComposite.SetWidth(240)
-	splitter.SetFixed(sidebarComposite, true)
+	const sidebarWidth = 240
+	sidebarComposite.SetMinMaxSize(walk.Size{Width: sidebarWidth}, walk.Size{Width: sidebarWidth})
 
 	sidebarTabs, err := walk.NewTabWidget(sidebarComposite)
 	if err != nil {
@@ -407,7 +411,7 @@ func (a *app) openFile(path string) error {
 		return err
 	}
 
-	pageScroll, err := walk.NewScrollView(splitter)
+	pageScroll, err := walk.NewScrollView(content)
 	if err != nil {
 		tabPage.Dispose()
 		doc.Close()
@@ -415,14 +419,13 @@ func (a *app) openFile(path string) error {
 	}
 	// Both scrollbars enabled - NOT just "false, true" for horizontal-off.
 	// walk.ScrollView's CreateLayoutItem (scrollview.go) only grants a
-	// ScrollView GrowableHorz/ShrinkableHorz layout flags when its
-	// horizontal scrollbar is enabled; with it disabled, the splitter's
-	// layout clamps pageScroll to its tiny "ideal" width instead of the
-	// stretch-factor share set below, and every extra pixel piles onto
-	// sidebarComposite instead - which is what made the sidebar swallow
-	// the entire window. Keeping the horizontal bar enabled also means a
-	// page wider than the viewport (zoomed in past 100%, or in continuous
-	// mode) can actually be scrolled to instead of just clipping.
+	// ScrollView GrowableHorz/ShrinkableHorz/GreedyHorz layout flags when
+	// its horizontal scrollbar is enabled; those flags are what let
+	// content's HBoxLayout give pageScroll the space left over after
+	// sidebarComposite's fixed width. Keeping the horizontal bar enabled
+	// also means a page wider than the viewport (zoomed in past 100%, or
+	// in continuous mode) can actually be scrolled to instead of just
+	// clipping.
 	pageScroll.SetScrollbars(true, true)
 
 	pageView, err := walk.NewCustomWidget(pageScroll, 0, func(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
@@ -435,17 +438,13 @@ func (a *app) openFile(path string) error {
 	}
 	pageView.SetClearsBackground(true)
 
-	// pageView (inside pageScroll) gets the rest of the splitter's width -
-	// sidebarComposite is pinned to a fixed width above (splitter.SetFixed),
-	// so pageScroll, as the only non-fixed splitter child, automatically
-	// absorbs 100% of whatever space remains. No stretch factor needed.
-	debugLog.Printf("after sidebar pinned: splitter=%v sidebarComposite=%v pageScroll=%v sidebarMax=%v",
-		splitter.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), sidebarComposite.MaxSizePixels())
+	debugLog.Printf("after sidebar pinned: content=%v sidebarComposite=%v pageScroll=%v sidebarMax=%v",
+		content.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), sidebarComposite.MaxSizePixels())
 
 	t.pageScroll = pageScroll
 	pageScroll.SizeChanged().Attach(func() {
-		debugLog.Printf("pageScroll.SizeChanged: splitter=%v sidebarComposite=%v pageScroll=%v pageView=%v",
-			splitter.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), pageView.BoundsPixels())
+		debugLog.Printf("pageScroll.SizeChanged: content=%v sidebarComposite=%v pageScroll=%v pageView=%v",
+			content.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), pageView.BoundsPixels())
 		a.applyPageViewMode(t)
 	})
 
@@ -495,8 +494,8 @@ func (a *app) openFile(path string) error {
 	go func() {
 		time.Sleep(2 * time.Second)
 		a.mainWindow.Synchronize(func() {
-			debugLog.Printf("2s-later snapshot: mainWindow=%v tabWidget=%v tabPage=%v splitter=%v sidebarComposite=%v pageScroll=%v pageView=%v",
-				a.mainWindow.BoundsPixels(), a.tabWidget.BoundsPixels(), tabPage.BoundsPixels(), splitter.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), pageView.BoundsPixels())
+			debugLog.Printf("2s-later snapshot: mainWindow=%v tabWidget=%v tabPage=%v content=%v sidebarComposite=%v pageScroll=%v pageView=%v",
+				a.mainWindow.BoundsPixels(), a.tabWidget.BoundsPixels(), tabPage.BoundsPixels(), content.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), pageView.BoundsPixels())
 		})
 	}()
 
