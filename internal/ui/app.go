@@ -268,23 +268,34 @@ func (a *app) openFile(path string) error {
 		debugLog.Printf("tabPage.SizeChanged: tabPage=%v", tabPage.BoundsPixels())
 	})
 
-	// Plain HBox composite, NOT HSplitter. Diagnostic logging (2026-07-14)
-	// traced the "sidebar swallows the window" bug all the way into
-	// walk's splitterLayout: splitterContainerLayoutItem.reset() - which
-	// runs on every relayout after a widget insertion - recomputes every
-	// child's size by stretch-factor proportion UNCONDITIONALLY, ignoring
-	// the Fixed flag entirely (Fixed only affects a later, conditional
-	// redistribution-of-leftover-space step). Since sidebarComposite's
-	// TreeView child reports a greedy/growable layout item, every reset()
-	// pulled the sidebar back out to nearly the splitter's full width -
-	// neither SetStretchFactor nor Splitter.SetFixed can prevent this in
-	// this walk version. A plain HBoxLayout has no such reset step: its
-	// boxLayoutItems sizing (boxlayout.go) reads each child's
-	// geometry.MaxSize directly on every layout pass, so pinning
-	// sidebarComposite's Min and Max to the same width below is a real,
-	// stable cap. Trade-off: no more drag-to-resize handle between the
-	// panes (Splitter-only feature) - acceptable since SetFixed had
-	// already disabled dragging for the sidebar before this change.
+	// Plain HBox composite, NOT HSplitter (see the sidebarComposite-width
+	// history below). content itself needs a real Layout to be sized by
+	// tabPage's VBoxLayout - createLayoutItemForWidgetWithContext
+	// (layout.go) skips any Container child outright when its Layout()
+	// is nil, so a nil-layout child never gets a size from its parent at
+	// all. That same rule is *why pageScroll's own bounds have to be
+	// managed by hand below* instead of via this HBoxLayout: pageScroll
+	// is a *walk.ScrollView, which itself satisfies Container and
+	// delegates Layout()/SetLayout() straight through to its internal,
+	// unexported composite (scrollview.go) - a composite this codebase
+	// deliberately never calls SetLayout on, because pageView is
+	// intentionally sized *larger* than the viewport for scrolling
+	// (see pageview.go), which a real layout would fight on every
+	// relayout. That composite's Layout() being nil means pageScroll
+	// hits the very same "nil layout -> skip this child" rule from its
+	// parent's perspective - it has silently never participated in any
+	// ancestor's layout, under the old HSplitter or this HBoxLayout,
+	// which is why its bounds were always stuck at {0 0 0 0} in every
+	// diagnostic log this session, and the real root cause of "PDF
+	// content never renders". Content's HBoxLayout is kept only so
+	// *content itself* resizes correctly as tabPage's child; alignment
+	// is pinned Near/zero-margin so sidebarComposite - content's only
+	// participating child now that pageScroll is manually excluded -
+	// lands flush left at (0,0) instead of being centered in the
+	// leftover space, and pageScroll is positioned by hand to fill
+	// exactly what's left, avoiding the Splitter era's earlier and
+	// unrelated "reset() ignores Fixed" pitfall for sidebarComposite's
+	// own width by keeping SetMinMaxSize (below) as its sizing source.
 	content, err := walk.NewComposite(tabPage)
 	if err != nil {
 		tabPage.Dispose()
@@ -292,6 +303,10 @@ func (a *app) openFile(path string) error {
 		return err
 	}
 	content.SetLayout(walk.NewHBoxLayout())
+	if hbox, ok := content.Layout().(*walk.BoxLayout); ok {
+		hbox.SetAlignment(walk.AlignHNearVNear)
+		hbox.SetMargins(walk.Margins{})
+	}
 	content.SizeChanged().Attach(func() {
 		debugLog.Printf("content.SizeChanged: tabPage=%v content=%v", tabPage.BoundsPixels(), content.BoundsPixels())
 	})
@@ -417,16 +432,22 @@ func (a *app) openFile(path string) error {
 		doc.Close()
 		return err
 	}
-	// Both scrollbars enabled - NOT just "false, true" for horizontal-off.
-	// walk.ScrollView's CreateLayoutItem (scrollview.go) only grants a
-	// ScrollView GrowableHorz/ShrinkableHorz/GreedyHorz layout flags when
-	// its horizontal scrollbar is enabled; those flags are what let
-	// content's HBoxLayout give pageScroll the space left over after
-	// sidebarComposite's fixed width. Keeping the horizontal bar enabled
-	// also means a page wider than the viewport (zoomed in past 100%, or
-	// in continuous mode) can actually be scrolled to instead of just
-	// clipping.
+	// Both scrollbars enabled so a page wider than the viewport (zoomed in
+	// past 100%, or in continuous mode) can actually be scrolled to
+	// instead of just clipping.
 	pageScroll.SetScrollbars(true, true)
+	// pageScroll's bounds are set by hand (below, on content.SizeChanged)
+	// rather than through content's HBoxLayout - see the long comment
+	// above content's creation for why a ScrollView can never
+	// participate in an ancestor's automatic layout in this codebase.
+	content.SizeChanged().Attach(func() {
+		cb := content.ClientBoundsPixels()
+		pageWidth := cb.Width - sidebarWidth
+		if pageWidth < 0 {
+			pageWidth = 0
+		}
+		pageScroll.SetBoundsPixels(walk.Rectangle{X: sidebarWidth, Y: 0, Width: pageWidth, Height: cb.Height})
+	})
 
 	pageView, err := walk.NewCustomWidget(pageScroll, 0, func(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 		return a.paintTab(t, canvas, updateBounds)
