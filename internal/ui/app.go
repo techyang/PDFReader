@@ -87,10 +87,21 @@ func Run(initialFile string) (int, error) {
 			Menu{
 				Text: "转到(&G)",
 				Items: []MenuItem{
-					Action{Text: "上一页", Shortcut: Shortcut{Key: walk.KeyPrior}, OnTriggered: a.onPrevPage},
-					Action{Text: "下一页", Shortcut: Shortcut{Key: walk.KeyNext}, OnTriggered: a.onNextPage},
-					Action{Text: "首页", Shortcut: Shortcut{Key: walk.KeyHome}, OnTriggered: a.onFirstPage},
-					Action{Text: "末页", Shortcut: Shortcut{Key: walk.KeyEnd}, OnTriggered: a.onLastPage},
+					// No Shortcut field here on purpose - the actual keyboard
+					// bindings live in bindPageNavShortcuts as separate,
+					// invisible Actions, guarded against stealing Home/End/
+					// PageUp/PageDown from the outline tree or search box.
+					// Sharing one Action between a menu item and a Shortcut
+					// would force that same guard onto mouse clicks too,
+					// which used to make these items silently do nothing
+					// whenever the sidebar/search box had focus - see
+					// navInputFocused's doc comment. The "\t..." suffix just
+					// reproduces walk's own shortcut-hint text (menu.go
+					// initMenuItemInfoFromAction) by hand, cosmetic only.
+					Action{Text: "上一页\tPageUp", OnTriggered: a.onPrevPageDirect},
+					Action{Text: "下一页\tPageDown", OnTriggered: a.onNextPageDirect},
+					Action{Text: "首页\tHome", OnTriggered: a.onFirstPageDirect},
+					Action{Text: "末页\tEnd", OnTriggered: a.onLastPageDirect},
 					Action{Text: "跳转到页码...(&G)", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyG}, OnTriggered: a.onGoToPage},
 				},
 			},
@@ -106,8 +117,8 @@ func Run(initialFile string) (int, error) {
 			Items: []MenuItem{
 				Action{Text: "打开", OnTriggered: a.onOpenClicked},
 				Separator{},
-				Action{Text: "◀", OnTriggered: a.onPrevPageToolbar},
-				Action{Text: "▶", OnTriggered: a.onNextPageToolbar},
+				Action{Text: "◀", OnTriggered: a.onPrevPageDirect},
+				Action{Text: "▶", OnTriggered: a.onNextPageDirect},
 			},
 		},
 		Children: []Widget{
@@ -123,7 +134,7 @@ func Run(initialFile string) (int, error) {
 	if err := mw.Create(); err != nil {
 		return 1, err
 	}
-	a.bindArrowKeyPaging()
+	a.bindPageNavShortcuts()
 	a.rebuildRecentMenu()
 	a.fitPageAction.SetEnabled(!a.cfg.ContinuousMode)
 	if initialFile != "" {
@@ -659,16 +670,16 @@ func (a *app) goToPage(t *tab, page int) {
 }
 
 // navInputFocused reports whether t's outline tree or search edit currently
-// has the keyboard input focus. The page-navigation shortcuts below are
-// registered as bare-key accelerators (Home/End/PageUp/PageDown with no
-// modifier), so they fire on every keydown regardless of which control has
-// focus - including the outline TreeView, whose native SysTreeView32
-// control interprets those same keys as "move tree selection", and the
-// search bar's LineEdit, whose native Edit control interprets Home/End as
-// "move text caret to start/end of line". Without this guard, clicking
-// into the sidebar (or the search box) and pressing Home/End would both
-// move the tree selection/text caret AND change the current PDF page at
-// the same time.
+// has the keyboard input focus. The page-navigation *keyboard shortcuts*
+// (bound in bindPageNavShortcuts below as bare-key accelerators - Home/End/
+// PageUp/PageDown/arrows, no modifier) fire on every keydown regardless of
+// which control has focus - including the outline TreeView, whose native
+// SysTreeView32 control interprets those same keys as "move tree
+// selection", and the search bar's LineEdit, whose native Edit control
+// interprets Home/End as "move text caret to start/end of line". Without
+// this guard, clicking into the sidebar (or the search box) and pressing
+// Home/End would both move the tree selection/text caret AND change the
+// current PDF page at the same time.
 //
 // Why this also applies to the search LineEdit: walk subclasses every
 // native control's window procedure via SetWindowLongPtr (see walk's
@@ -683,23 +694,24 @@ func (a *app) goToPage(t *tab, page int) {
 // jump fires first, and the native caret movement happens afterward
 // regardless.
 //
-// This guard is only applied to the keyboard-accelerator path
-// (onPrevPage/onNextPage/onFirstPage/onLastPage below, wired to the
-// "转到" menu's Shortcut-bearing Actions). It deliberately does NOT apply
-// to the toolbar ◀/▶ buttons (see onPrevPageToolbar/onNextPageToolbar) -
-// an explicit mouse click is never the redundant-double-fire scenario this
-// guard exists for, and applying it there previously caused the toolbar
-// buttons to silently do nothing whenever the outline tree had focus
-// (including via plain Tab-key cycling, even with an empty outline). The
-// same reasoning extends to the search box.
-//
-// One known, accepted limitation: because walk ties a menu item's
-// OnTriggered to the same Action as its Shortcut, there is no way to let an
-// explicit mouse click on the "上一页"/"下一页" *menu item* bypass this
-// guard while still blocking the keyboard accelerator - both go through the
-// same guarded handler. This is considered acceptable since clicking the
-// menu item while the tree/search box has focus is a much rarer path than
-// the toolbar/Tab-cycling case.
+// This guard only applies to that keyboard-accelerator path
+// (onPrevPage/onNextPage/onFirstPage/onLastPage below, wired to
+// bindPageNavShortcuts's invisible ShortcutActions). It must NOT be applied
+// to an explicit mouse click - not just for the toolbar ◀/▶ buttons but
+// also the "转到" menu's own items (see onPrevPageDirect and friends): walk
+// fires a menu item's OnTriggered through the exact same Action as its
+// keyboard Shortcut, via the unrelated WM_COMMAND/actionsById path in
+// container.go, completely independent of handleKeyDown/shortcut2Action
+// above. A version of this guard used to live on the "转到" menu's Actions
+// directly (sharing one Action, and thus one guarded handler, for both the
+// menu click and the keyboard shortcut) and as a result clicking "上一页"/
+// "下一页"/"首页"/"末页" with the mouse silently did nothing whenever the
+// outline tree or search box still held focus - exactly the toolbar bug
+// described above, just less obvious because a menu click looks like it
+// should always be intentional. bindPageNavShortcuts's ShortcutActions are
+// separate, invisible Actions with no menu presence, so the menu's own
+// Actions can go back to being permanently unguarded like the toolbar
+// buttons always were.
 func navInputFocused(t *tab) bool {
 	if t == nil {
 		return false
@@ -708,27 +720,30 @@ func navInputFocused(t *tab) bool {
 		(t.searchEdit != nil && t.searchEdit.Focused())
 }
 
-// bindArrowKeyPaging adds Left/Up as extra "previous page" shortcuts and
-// Right/Down as extra "next page" shortcuts, alongside the "转到" menu's
-// existing PageUp/PageDown bindings. These are registered as bare
-// ShortcutActions rather than menu items: menu Actions can only display
-// one Shortcut each, and a second visible "上一页"/"下一页" entry showing
-// a different key would just be confusing menu clutter for a binding
-// that's meant to be muscle-memory only. They reuse onPrevPage/onNextPage
-// (not the Toolbar variants) so navInputFocused's guard against
-// hijacking the outline tree's/search box's own arrow-key handling
-// still applies - see navInputFocused's doc comment for why that matters.
-func (a *app) bindArrowKeyPaging() {
+// bindPageNavShortcuts registers the keyboard side of page navigation -
+// Home/End/PageUp/PageDown plus the arrow keys - as bare ShortcutActions
+// with no menu presence, all routed through the navInputFocused-guarded
+// handlers (onPrevPage/onNextPage/onFirstPage/onLastPage). Keeping these
+// separate from the "转到" menu's own Actions (see navInputFocused's doc
+// comment for why that separation matters) also sidesteps a real
+// constraint: a walk menu Action can only display one Shortcut, so the
+// extra arrow-key bindings couldn't have lived on the menu items even if
+// the guard-sharing problem didn't exist.
+func (a *app) bindPageNavShortcuts() {
 	bind := func(key walk.Key, fn func()) {
 		action := walk.NewAction()
 		action.SetShortcut(walk.Shortcut{Key: key})
 		action.Triggered().Attach(fn)
 		a.mainWindow.ShortcutActions().Add(action)
 	}
+	bind(walk.KeyPrior, a.onPrevPage)
 	bind(walk.KeyLeft, a.onPrevPage)
 	bind(walk.KeyUp, a.onPrevPage)
+	bind(walk.KeyNext, a.onNextPage)
 	bind(walk.KeyRight, a.onNextPage)
 	bind(walk.KeyDown, a.onNextPage)
+	bind(walk.KeyHome, a.onFirstPage)
+	bind(walk.KeyEnd, a.onLastPage)
 }
 
 func (a *app) onPrevPage() {
@@ -763,10 +778,13 @@ func (a *app) onLastPage() {
 	a.goToPage(t, t.doc.PageCount()-1)
 }
 
-// onPrevPageToolbar and onNextPageToolbar back the toolbar's ◀/▶ buttons.
+// onPrevPageDirect/onNextPageDirect/onFirstPageDirect/onLastPageDirect
+// back both the toolbar's ◀/▶ buttons and the "转到" menu's own items.
 // They intentionally skip the navInputFocused guard applied to
-// onPrevPage/onNextPage above - see the comment on navInputFocused for why.
-func (a *app) onPrevPageToolbar() {
+// onPrevPage/onNextPage/onFirstPage/onLastPage above - see the comment on
+// navInputFocused for why an explicit click (mouse on the toolbar, or
+// mouse/Enter on an open menu item) must never be blocked by it.
+func (a *app) onPrevPageDirect() {
 	t := a.currentTab()
 	if t == nil {
 		return
@@ -774,12 +792,28 @@ func (a *app) onPrevPageToolbar() {
 	a.goToPage(t, t.page-1)
 }
 
-func (a *app) onNextPageToolbar() {
+func (a *app) onNextPageDirect() {
 	t := a.currentTab()
 	if t == nil {
 		return
 	}
 	a.goToPage(t, t.page+1)
+}
+
+func (a *app) onFirstPageDirect() {
+	t := a.currentTab()
+	if t == nil {
+		return
+	}
+	a.goToPage(t, 0)
+}
+
+func (a *app) onLastPageDirect() {
+	t := a.currentTab()
+	if t == nil {
+		return
+	}
+	a.goToPage(t, t.doc.PageCount()-1)
 }
 
 func (a *app) setZoom(t *tab, z document.Zoom) {
