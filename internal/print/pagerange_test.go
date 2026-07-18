@@ -81,3 +81,19 @@ func TestParseRange_EmptyTokensSkipped(t *testing.T) {
 		t.Fatalf("ParseRange(\"1,,3\", 5) = %v, want %v", got, want)
 	}
 }
+
+func TestParseRange_EmptySpecWithNonPositivePageCountIsError(t *testing.T) {
+	_, err := ParseRange("", 0)
+	if err == nil {
+		t.Fatalf("ParseRange(\"\", 0) = nil error, want error (page count must be positive)")
+	}
+}
+
+func TestParseRange_MalformedDashComponentIsError(t *testing.T) {
+	if _, err := ParseRange("a-5", 5); err == nil {
+		t.Fatalf("ParseRange(\"a-5\", 5) = nil error, want error (non-numeric start)")
+	}
+	if _, err := ParseRange("5-a", 5); err == nil {
+		t.Fatalf("ParseRange(\"5-a\", 5) = nil error, want error (non-numeric end)")
+	}
+}

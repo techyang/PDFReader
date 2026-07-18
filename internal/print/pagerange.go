@@ -65,7 +65,7 @@ func ParseRange(spec string, pageCount int) ([]int, error) {
 			if start > end {
 				return nil, fmt.Errorf("print: invalid range %q (start > end)", part)
 			}
-			for n := start; n <= end; n++ {
+			for n := start; n <= end && n <= pageCount; n++ {
 				add(n)
 			}
 			continue
