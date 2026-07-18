@@ -328,7 +328,17 @@ func (a *app) showPrintDialog(initial *printItem, onRun func(items []print.Item,
 						},
 					},
 					Label{Text: "份数："},
-					NumberEdit{AssignTo: &copiesEdit, MinValue: 1, MaxValue: 999, Decimals: 0, Value: 1},
+					// Value is a declarative.Property (interface{}); walk's
+					// registered property setter for NumberEdit.Value does a
+					// plain `value.(float64)` type assertion (see
+					// assertFloat64Or in walk's util.go) with no int-to-
+					// float64 conversion, silently falling back to 0.0 on a
+					// mismatch instead of erroring - so this MUST be a
+					// float64 literal (1.0), not the untyped int constant 1
+					// (which boxes as `int` here and would make the actual
+					// applied value 0.0, out of [1,999]'s range and a
+					// guaranteed panic from walk's own SetValue).
+					NumberEdit{AssignTo: &copiesEdit, MinValue: 1, MaxValue: 999, Decimals: 0, Value: 1.0},
 					CheckBox{AssignTo: &grayscaleBox, Text: "灰度打印", Checked: a.cfg.LastGrayscale},
 					CheckBox{AssignTo: &duplexBox, Text: "双面打印", Checked: a.cfg.LastDuplex},
 					Label{Text: "范围："},
