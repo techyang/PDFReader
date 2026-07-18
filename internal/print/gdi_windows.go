@@ -178,7 +178,10 @@ func (j *gdiJob) PrintPage(doc *pdfengine.Document, pageIndex int, settings Sett
 
 	bits, bmiHeader := toDIBBits(img, settings.Grayscale)
 	bmi := win.BITMAPINFO{BmiHeader: bmiHeader}
-	stretchDIBits(j.hdc, x, y, w, h, 0, 0, int32(imgW), int32(imgH), unsafe.Pointer(&bits[0]), &bmi, win.DIB_RGB_COLORS, win.SRCCOPY)
+	if stretchDIBits(j.hdc, x, y, w, h, 0, 0, int32(imgW), int32(imgH), unsafe.Pointer(&bits[0]), &bmi, win.DIB_RGB_COLORS, win.SRCCOPY) == 0 {
+		win.EndPage(j.hdc)
+		return fmt.Errorf("print: StretchDIBits failed")
+	}
 
 	if win.EndPage(j.hdc) <= 0 {
 		return fmt.Errorf("print: EndPage failed")
@@ -187,38 +190,23 @@ func (j *gdiJob) PrintPage(doc *pdfengine.Document, pageIndex int, settings Sett
 }
 
 func (j *gdiJob) Close() error {
-	win.EndDoc(j.hdc)
+	endDocResult := win.EndDoc(j.hdc)
 	win.DeleteDC(j.hdc)
+	if endDocResult <= 0 {
+		return fmt.Errorf("print: EndDoc failed")
+	}
 	return nil
 }
 
 // toDIBBits converts img (as returned by pdfengine.Document.RenderPage -
 // row 0 is the top row) into a top-down 32bpp BGRA buffer plus a matching
-// BITMAPINFOHEADER, ready for stretchDIBits.
-//
-// Windows DIBs store pixels as B,G,R,A/X - the reverse channel order
-// from Go's image.RGBA (R,G,B,A) - so this always swaps channels;
-// grayscale is applied here too (channel-order-agnostic, so it doesn't
-// matter whether it happens before or after the swap) so gdiJob never
-// touches image.RGBA's raw bytes directly.
+// BITMAPINFOHEADER, ready for stretchDIBits. The actual pixel conversion
+// (channel swap, grayscale) lives in bgraFromRGBA (dib.go) since it has
+// no Windows dependency and can be unit-tested there; this function just
+// wraps that buffer in the Windows-specific bitmap header.
 func toDIBBits(img *image.RGBA, grayscale bool) ([]byte, win.BITMAPINFOHEADER) {
 	w, h := img.Rect.Dx(), img.Rect.Dy()
-	out := make([]byte, w*h*4)
-	for y := 0; y < h; y++ {
-		srcRow := img.Pix[y*img.Stride : y*img.Stride+w*4]
-		dstRow := out[y*w*4 : y*w*4+w*4]
-		for x := 0; x < w; x++ {
-			r, g, b, a := srcRow[x*4], srcRow[x*4+1], srcRow[x*4+2], srcRow[x*4+3]
-			if grayscale {
-				gray := uint8((uint32(r)*299 + uint32(g)*587 + uint32(b)*114) / 1000)
-				r, g, b = gray, gray, gray
-			}
-			dstRow[x*4] = b
-			dstRow[x*4+1] = g
-			dstRow[x*4+2] = r
-			dstRow[x*4+3] = a
-		}
-	}
+	out := bgraFromRGBA(img, grayscale)
 	return out, win.BITMAPINFOHEADER{
 		BiSize:        uint32(unsafe.Sizeof(win.BITMAPINFOHEADER{})),
 		BiWidth:       int32(w),
