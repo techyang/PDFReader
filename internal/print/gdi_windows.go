@@ -178,7 +178,7 @@ func (j *gdiJob) PrintPage(doc *pdfengine.Document, pageIndex int, settings Sett
 
 	bits, bmiHeader := toDIBBits(img, settings.Grayscale)
 	bmi := win.BITMAPINFO{BmiHeader: bmiHeader}
-	if stretchDIBits(j.hdc, x, y, w, h, 0, 0, int32(imgW), int32(imgH), unsafe.Pointer(&bits[0]), &bmi, win.DIB_RGB_COLORS, win.SRCCOPY) == 0 {
+	if stretchDIBits(j.hdc, x, y, w, h, 0, 0, int32(imgW), int32(imgH), unsafe.Pointer(&bits[0]), &bmi, win.DIB_RGB_COLORS, win.SRCCOPY) <= 0 {
 		win.EndPage(j.hdc)
 		return fmt.Errorf("print: StretchDIBits failed")
 	}
