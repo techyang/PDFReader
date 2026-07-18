@@ -7,6 +7,7 @@ import (
 	"unsafe"
 
 	"github.com/lxn/win"
+	"golang.org/x/sys/windows"
 )
 
 // ListPrinterNames returns every local/connected printer's name, plus
@@ -31,27 +32,12 @@ func ListPrinterNames() (names []string, defaultName string, err error) {
 	names = make([]string, 0, returned)
 	for _, info := range infos {
 		if info.PPrinterName != nil {
-			names = append(names, utf16PtrToString(info.PPrinterName))
+			names = append(names, windows.UTF16PtrToString(info.PPrinterName))
 		}
 	}
 
 	defaultName, _ = defaultPrinterName()
 	return names, defaultName, nil
-}
-
-// utf16PtrToString converts a NUL-terminated UTF-16 string pointer (as
-// returned in Win32 structs like PRINTER_INFO_4) to a Go string. The
-// standard syscall package only offers UTF16ToString (slice-based), not
-// a pointer variant, so this scans for the terminating NUL itself.
-func utf16PtrToString(p *uint16) string {
-	if p == nil {
-		return ""
-	}
-	n := 0
-	for *(*uint16)(unsafe.Add(unsafe.Pointer(p), uintptr(n)*2)) != 0 {
-		n++
-	}
-	return syscall.UTF16ToString(unsafe.Slice(p, n))
 }
 
 func defaultPrinterName() (string, error) {
@@ -98,9 +84,25 @@ func ListPaperSizes(printerName string) ([]PaperSize, error) {
 		return nil, err
 	}
 
-	count := win.DeviceCapabilities(namePtr, nil, win.DC_PAPERNAMES, nil, nil)
-	if int32(count) <= 0 {
+	nameCount := win.DeviceCapabilities(namePtr, nil, win.DC_PAPERNAMES, nil, nil)
+	if int32(nameCount) <= 0 {
 		return nil, fmt.Errorf("print: printer %q reports no paper names", printerName)
+	}
+	paperCount := win.DeviceCapabilities(namePtr, nil, win.DC_PAPERS, nil, nil)
+	if int32(paperCount) <= 0 {
+		return nil, fmt.Errorf("print: printer %q reports no paper codes", printerName)
+	}
+
+	// DC_PAPERNAMES and DC_PAPERS are documented as parallel arrays, but
+	// that's a driver convention, not something DeviceCapabilities
+	// enforces - it just writes as many entries as the driver reports
+	// for whichever capability is queried. Bound both buffers by the
+	// smaller of the two counts so a nonconforming driver that reports
+	// more DC_PAPERS entries than DC_PAPERNAMES entries (or vice versa)
+	// can't make DeviceCapabilities write past either buffer's end.
+	count := nameCount
+	if paperCount < count {
+		count = paperCount
 	}
 
 	nameBuf := make([]uint16, int(count)*paperNameEntryLen)
