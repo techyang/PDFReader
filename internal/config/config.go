@@ -38,8 +38,8 @@ type Config struct {
 	LastGrayscale    bool   `json:"lastPrintGrayscale"`
 	LastDuplex       bool   `json:"lastPrintDuplex"`
 	LastPaperName    string `json:"lastPrintPaperSize"`
-	LastOrientation  string `json:"lastPrintOrientation"`  // "portrait" or "landscape"
-	LastScaleMode    string `json:"lastPrintScaleMode"`    // "fit", "actual", or "percent"
+	LastOrientation  string `json:"lastPrintOrientation"` // "portrait" or "landscape"
+	LastScaleMode    string `json:"lastPrintScaleMode"`   // "fit", "actual", or "percent"
 	LastScalePercent int    `json:"lastPrintScalePercent"`
 }
 
