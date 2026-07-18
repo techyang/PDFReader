@@ -10,7 +10,8 @@ import (
 )
 
 type fakeJob struct {
-	failOnPage int // -1 = never fail
+	failOnPage int   // -1 = never fail
+	closeErr   error // nil = Close never fails
 	printed    []int
 }
 
@@ -22,11 +23,12 @@ func (j *fakeJob) PrintPage(doc *pdfengine.Document, pageIndex int, settings Set
 	return nil
 }
 
-func (j *fakeJob) Close() error { return nil }
+func (j *fakeJob) Close() error { return j.closeErr }
 
 type fakeBackend struct {
 	failOpenFor map[string]bool
-	failOnPage  int // applied to every job this backend opens; -1 = never fail
+	failOnPage  int   // applied to every job this backend opens; -1 = never fail
+	closeErr    error // applied to every job this backend opens; nil = Close never fails
 	opened      []string
 }
 
@@ -35,7 +37,7 @@ func (b *fakeBackend) Open(settings Settings, docName string) (BackendJob, error
 	if b.failOpenFor[docName] {
 		return nil, errors.New("fake open error")
 	}
-	return &fakeJob{failOnPage: b.failOnPage}, nil
+	return &fakeJob{failOnPage: b.failOnPage, closeErr: b.closeErr}, nil
 }
 
 func newItem(path string, pageCount int, rangeSpec string) Item {
@@ -151,5 +153,28 @@ func TestRunJob_ProgressReceivesCorrectFileAndPageCounts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("progress calls = %+v, want %+v", got, want)
+	}
+}
+
+func TestRunJob_CloseErrorSurfacesWhenNoPageError(t *testing.T) {
+	closeErr := errors.New("fake close error")
+	b := &fakeBackend{failOnPage: -1, closeErr: closeErr}
+	items := []Item{newItem("a.pdf", 2, "")}
+
+	results := RunJob(b, items, Settings{}, func(Progress) bool { return false })
+
+	if !errors.Is(results[0].Err, closeErr) {
+		t.Fatalf("results[0].Err = %v, want closeErr (%v)", results[0].Err, closeErr)
+	}
+}
+
+func TestRunJob_PageErrorTakesPrecedenceOverCloseError(t *testing.T) {
+	b := &fakeBackend{failOnPage: 0, closeErr: errors.New("fake close error")}
+	items := []Item{newItem("a.pdf", 2, "")}
+
+	results := RunJob(b, items, Settings{}, func(Progress) bool { return false })
+
+	if results[0].Err == nil || errors.Is(results[0].Err, b.closeErr) {
+		t.Fatalf("results[0].Err = %v, want the page error, not the close error", results[0].Err)
 	}
 }
