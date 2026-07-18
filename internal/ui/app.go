@@ -123,6 +123,7 @@ func Run(initialFile string) (int, error) {
 	if err := mw.Create(); err != nil {
 		return 1, err
 	}
+	a.bindArrowKeyPaging()
 	a.rebuildRecentMenu()
 	a.fitPageAction.SetEnabled(!a.cfg.ContinuousMode)
 	if initialFile != "" {
@@ -705,6 +706,29 @@ func navInputFocused(t *tab) bool {
 	}
 	return (t.outlineTree != nil && t.outlineTree.Focused()) ||
 		(t.searchEdit != nil && t.searchEdit.Focused())
+}
+
+// bindArrowKeyPaging adds Left/Up as extra "previous page" shortcuts and
+// Right/Down as extra "next page" shortcuts, alongside the "转到" menu's
+// existing PageUp/PageDown bindings. These are registered as bare
+// ShortcutActions rather than menu items: menu Actions can only display
+// one Shortcut each, and a second visible "上一页"/"下一页" entry showing
+// a different key would just be confusing menu clutter for a binding
+// that's meant to be muscle-memory only. They reuse onPrevPage/onNextPage
+// (not the Toolbar variants) so navInputFocused's guard against
+// hijacking the outline tree's/search box's own arrow-key handling
+// still applies - see navInputFocused's doc comment for why that matters.
+func (a *app) bindArrowKeyPaging() {
+	bind := func(key walk.Key, fn func()) {
+		action := walk.NewAction()
+		action.SetShortcut(walk.Shortcut{Key: key})
+		action.Triggered().Attach(fn)
+		a.mainWindow.ShortcutActions().Add(action)
+	}
+	bind(walk.KeyLeft, a.onPrevPage)
+	bind(walk.KeyUp, a.onPrevPage)
+	bind(walk.KeyRight, a.onNextPage)
+	bind(walk.KeyDown, a.onNextPage)
 }
 
 func (a *app) onPrevPage() {
