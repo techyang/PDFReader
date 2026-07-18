@@ -201,15 +201,32 @@ func (a *app) runPrintJob(items []print.Item, settings print.Settings) {
 		cancelOnce.Do(func() { close(cancelled) })
 	}
 
-	// The "取消" button deliberately does NOT call progressDlg.Cancel() -
-	// it only signals requestCancel and leaves the dialog open. RunJob
-	// still needs to run BackendJob.Close() on whatever file is
-	// currently mid-print so it doesn't leave a half-finished job sitting
-	// in the spooler queue; the dialog only actually closes once the
-	// goroutine below reaches close(done) and schedules
-	// progressDlg.Accept() itself. sync.Once guards against a user
-	// clicking "取消" more than once (closing an already-closed channel
-	// would panic).
+	// done is closed by the background goroutine once RunJob returns -
+	// it's declared up front because both the Cancel button and the
+	// Closing handler below (attached before the goroutine is even
+	// launched) need to distinguish "user wants to cancel" from "the job
+	// already finished and this is our own Accept() call closing the
+	// window".
+	done := make(chan struct{})
+
+	// cancelUI gives immediate visible feedback that a cancel request has
+	// been received, whether it came from the "取消" button or from the
+	// dialog's native close box (X / Alt+F4 / system menu / Escape) - see
+	// the Closing handler below. It deliberately does NOT call
+	// progressDlg.Cancel() or otherwise close the window - it only
+	// signals requestCancel and disables the button. RunJob still needs
+	// to run BackendJob.Close() on whatever file is currently mid-print
+	// so it doesn't leave a half-finished job sitting in the spooler
+	// queue; the dialog only actually closes once the goroutine below
+	// reaches close(done) and schedules progressDlg.Accept() itself.
+	// sync.Once (inside requestCancel) guards against this firing more
+	// than once (closing an already-closed channel would panic).
+	cancelUI := func() {
+		requestCancel()
+		cancelBtn.SetEnabled(false)
+		statusLabel.SetText("正在取消，请稍候…")
+	}
+
 	d := Dialog{
 		AssignTo:     &progressDlg,
 		Title:        "正在打印",
@@ -219,12 +236,50 @@ func (a *app) runPrintJob(items []print.Item, settings print.Settings) {
 		Children: []Widget{
 			Label{AssignTo: &statusLabel, Text: "准备中…"},
 			ProgressBar{AssignTo: &bar, MinValue: 0, MaxValue: len(items)},
-			PushButton{AssignTo: &cancelBtn, Text: "取消", OnClicked: func() { requestCancel() }},
+			PushButton{AssignTo: &cancelBtn, Text: "取消", OnClicked: cancelUI},
 		},
 	}
 
+	// Deviation from d.Run(a.mainWindow) (which is just Create() then
+	// (*AssignTo).Run() with the error discarded, per walk's dialog.go):
+	// Create()'s error is checked explicitly here, matching the pattern
+	// printdialog.go's showPrintDialog already established, because a
+	// discarded Create() failure would otherwise leave the
+	// goroutine-launching Synchronize callback below queued forever with
+	// nothing left to drain it (no modal loop ever starts), deadlocking
+	// on <-done.
+	if err := d.Create(a.mainWindow); err != nil {
+		walk.MsgBox(a.mainWindow, "打印", fmt.Sprintf("无法创建进度对话框：%v", err), walk.MsgBoxIconError)
+		return
+	}
+
+	// The dialog's native close box (X / Alt+F4 / system menu) sends
+	// WM_CLOSE, which FormBase's default handling would otherwise act on
+	// directly - destroying the window immediately without ever routing
+	// through the Cancel button's OnClicked. That would leave the
+	// background goroutine running RunJob to completion uncancelled and
+	// invisible (still spooling pages) while <-done below blocks for
+	// real - and since that wait sits on the main goroutine's call stack,
+	// a.mainWindow's own message loop isn't being pumped either, so the
+	// app would show "Not Responding" until the whole batch finishes.
+	// Vetoing the close here (per walk's FormBase.Closing/CloseEvent -
+	// setting *canceled = true stops WM_CLOSE from proceeding) and
+	// routing it through the same cancelUI path fixes that; the window
+	// only actually closes once our own goroutine reaches close(done)
+	// and calls progressDlg.Accept(), which is allowed through below.
+	progressDlg.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
+		select {
+		case <-done:
+			// The job already finished; this WM_CLOSE is our own
+			// Accept() call - let it proceed.
+			return
+		default:
+		}
+		*canceled = true
+		cancelUI()
+	})
+
 	var results []print.Result
-	done := make(chan struct{})
 
 	a.mainWindow.Synchronize(func() {
 		go func() {
@@ -243,11 +298,18 @@ func (a *app) runPrintJob(items []print.Item, settings print.Settings) {
 				return false
 			})
 			close(done)
-			a.mainWindow.Synchronize(func() { progressDlg.Accept() })
+			a.mainWindow.Synchronize(func() {
+				// Bring the bar to a visible 100% - SetValue above only
+				// ever reaches len(items)-1 (0-based FileIndex), so
+				// without this the bar would look permanently empty for
+				// a single-file job and never visibly finish for any job.
+				bar.SetValue(len(items))
+				progressDlg.Accept()
+			})
 		}()
 	})
 
-	d.Run(a.mainWindow)
+	progressDlg.Run()
 	<-done // already closed by the time Run() returns on every path (Accept() is itself scheduled after close(done) in the goroutine above) - this is the explicit happens-before edge that makes reading results just below safe
 
 	a.showPrintSummary(results)
