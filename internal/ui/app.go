@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/lxn/walk"
@@ -13,6 +15,7 @@ import (
 	"pdfreader/internal/config"
 	"pdfreader/internal/document"
 	"pdfreader/internal/pdfengine"
+	"pdfreader/internal/print"
 )
 
 // app is the single running instance of the UI, owning the pdfium pool,
@@ -69,6 +72,7 @@ func Run(initialFile string) (int, error) {
 						Text:           "最近打开的文件",
 					},
 					Action{Text: "关闭标签(&W)", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyW}, OnTriggered: a.closeCurrentTab},
+					Action{Text: "打印...(&P)", Shortcut: Shortcut{Modifiers: walk.ModControl, Key: walk.KeyP}, OnTriggered: a.onPrint},
 					Action{Text: "退出(&X)", OnTriggered: func() { a.mainWindow.Close() }},
 				},
 			},
@@ -144,6 +148,144 @@ func Run(initialFile string) (int, error) {
 	}
 	a.mainWindow.Show()
 	return a.mainWindow.Run(), nil
+}
+
+// onPrint opens the print dialog (Ctrl+P / 文件 > 打印...). If a tab is
+// currently open, it's pre-added to the dialog's file list as a
+// borrowed (not owned) item, reusing its already-open (possibly already
+// password-unlocked) pdfengine.Document - see showPrintDialog and
+// printItem's doc comment for why ownsDoc matters.
+func (a *app) onPrint() {
+	var initial *printItem
+	if t := a.currentTab(); t != nil {
+		initial = &printItem{path: t.path, doc: t.doc, pageCount: t.doc.PageCount(), ownsDoc: false}
+	}
+
+	a.showPrintDialog(initial, func(items []print.Item, settings print.Settings) {
+		a.runPrintJob(items, settings)
+	})
+}
+
+// runPrintJob runs items/settings on a background goroutine (GDI print
+// calls are synchronous/blocking), showing a small progress dialog with
+// a cancel button while it runs, and a summary MsgBox once it's done
+// (or cancelled).
+//
+// walk.Dialog.Run() is blocking (see printdialog.go's showPrintDialog
+// for the detailed explanation) and progressDlg/bar/statusLabel only
+// become valid partway through it (Create() runs first, then the modal
+// message loop starts). A goroutine started before Run() is called
+// could reach progressDlg.Synchronize(...) before Create() has even
+// run, dereferencing a still-nil *walk.Dialog. To avoid that race, the
+// goroutine itself isn't started directly - instead a.mainWindow.Synchronize
+// schedules its launch as a message to be processed once the (already-
+// running, always-valid) main window's message loop gets to it, which -
+// because Create() happens strictly before Run()'s modal loop starts
+// dispatching messages at all, and Win32 message dispatch is per-thread
+// rather than per-window, so a message posted to a.mainWindow's hWnd is
+// still delivered by the dialog's nested modal loop on the same thread -
+// is guaranteed to run after progressDlg/bar/statusLabel are assigned.
+// Every cross-goroutine UI touch below also goes through
+// a.mainWindow.Synchronize rather than progressDlg.Synchronize, for the
+// same reason: a.mainWindow is unconditionally non-nil the whole time
+// this function runs.
+func (a *app) runPrintJob(items []print.Item, settings print.Settings) {
+	var progressDlg *walk.Dialog
+	var bar *walk.ProgressBar
+	var statusLabel *walk.Label
+	var cancelBtn *walk.PushButton
+
+	cancelled := make(chan struct{})
+	var cancelOnce sync.Once
+	requestCancel := func() {
+		cancelOnce.Do(func() { close(cancelled) })
+	}
+
+	// The "取消" button deliberately does NOT call progressDlg.Cancel() -
+	// it only signals requestCancel and leaves the dialog open. RunJob
+	// still needs to run BackendJob.Close() on whatever file is
+	// currently mid-print so it doesn't leave a half-finished job sitting
+	// in the spooler queue; the dialog only actually closes once the
+	// goroutine below reaches close(done) and schedules
+	// progressDlg.Accept() itself. sync.Once guards against a user
+	// clicking "取消" more than once (closing an already-closed channel
+	// would panic).
+	d := Dialog{
+		AssignTo:     &progressDlg,
+		Title:        "正在打印",
+		Layout:       VBox{},
+		MinSize:      Size{Width: 360, Height: 100},
+		CancelButton: &cancelBtn,
+		Children: []Widget{
+			Label{AssignTo: &statusLabel, Text: "准备中…"},
+			ProgressBar{AssignTo: &bar, MinValue: 0, MaxValue: len(items)},
+			PushButton{AssignTo: &cancelBtn, Text: "取消", OnClicked: func() { requestCancel() }},
+		},
+	}
+
+	var results []print.Result
+	done := make(chan struct{})
+
+	a.mainWindow.Synchronize(func() {
+		go func() {
+			backend := print.NewGDIBackend()
+			results = print.RunJob(backend, items, settings, func(p print.Progress) bool {
+				select {
+				case <-cancelled:
+					return true
+				default:
+				}
+				a.mainWindow.Synchronize(func() {
+					bar.SetValue(p.FileIndex)
+					statusLabel.SetText(fmt.Sprintf("正在打印 %d/%d：%s（第 %d/%d 页）",
+						p.FileIndex+1, p.FileCount, filepathBase(p.FileName), p.Page, p.PageCount))
+				})
+				return false
+			})
+			close(done)
+			a.mainWindow.Synchronize(func() { progressDlg.Accept() })
+		}()
+	})
+
+	d.Run(a.mainWindow)
+	<-done // already closed by the time Run() returns on every path (Accept() is itself scheduled after close(done) in the goroutine above) - this is the explicit happens-before edge that makes reading results just below safe
+
+	a.showPrintSummary(results)
+}
+
+// showPrintSummary reports RunJob's outcome.
+func (a *app) showPrintSummary(results []print.Result) {
+	succeeded, failed, cancelled := 0, 0, 0
+	var detail strings.Builder
+	for _, r := range results {
+		switch {
+		case r.Err == nil:
+			succeeded++
+		case errors.Is(r.Err, print.ErrCancelled):
+			cancelled++
+			fmt.Fprintf(&detail, "\n未打印：%s", filepathBase(r.Item.Path))
+		default:
+			failed++
+			fmt.Fprintf(&detail, "\n失败：%s（%v）", filepathBase(r.Item.Path), r.Err)
+		}
+	}
+
+	summary := fmt.Sprintf("打印完成：成功 %d 个", succeeded)
+	if failed > 0 {
+		summary += fmt.Sprintf("，失败 %d 个", failed)
+	}
+	if cancelled > 0 {
+		summary = fmt.Sprintf("已取消。成功 %d 个", succeeded)
+		if failed > 0 {
+			summary += fmt.Sprintf("，失败 %d 个", failed)
+		}
+	}
+
+	icon := walk.MsgBoxIconInformation
+	if failed > 0 || cancelled > 0 {
+		icon = walk.MsgBoxIconWarning
+	}
+	walk.MsgBox(a.mainWindow, "打印", summary+detail.String(), icon)
 }
 
 func (a *app) onOpenClicked() {
