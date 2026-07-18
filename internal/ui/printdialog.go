@@ -2,9 +2,7 @@
 package ui
 
 import (
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/lxn/walk"
@@ -483,30 +481,12 @@ func fallbackPaperSizesFor() []print.PaperSize {
 // the caller's "file failed to add" message box isn't shown for a
 // deliberate cancel.
 func openPrintItem(a *app, path string) (*printItem, error) {
-	data, err := os.ReadFile(path)
+	doc, err := a.openWithPasswordPrompt(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", errFileUnreadable, err)
-	}
-
-	doc, err := a.pool.Open(data, nil)
-	if errors.Is(err, pdfengine.ErrPasswordRequired) {
-		wrongAttempt := false
-		for {
-			pw, ok := promptPassword(a.mainWindow, filepathBase(path), wrongAttempt)
-			if !ok {
-				return nil, nil
-			}
-			doc, err = a.pool.Open(data, &pw)
-			if err == nil {
-				break
-			}
-			if !errors.Is(err, pdfengine.ErrPasswordRequired) {
-				return nil, err
-			}
-			wrongAttempt = true
-		}
-	} else if err != nil {
 		return nil, err
+	}
+	if doc == nil {
+		return nil, nil
 	}
 
 	return &printItem{path: path, doc: doc, pageCount: doc.PageCount(), ownsDoc: true}, nil

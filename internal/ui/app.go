@@ -170,6 +170,45 @@ func (a *app) onOpenClicked() {
 // latter are unrelated to whether the file still exists.
 var errFileUnreadable = errors.New("无法读取文件")
 
+// openWithPasswordPrompt reads path's bytes and opens them via a.pool,
+// prompting for a password (retrying on wrong password) if the document
+// turns out to be encrypted - the read+open+password-retry logic shared
+// by openFile (which goes on to build a whole tab) and printdialog.go's
+// openPrintItem (which just needs the *pdfengine.Document itself). A
+// cancelled or permanently-wrong password returns a nil doc with a nil
+// error - not treated as a hard failure, since giving up on a password
+// prompt is a deliberate user choice, not something either caller should
+// report as an unexpected error.
+func (a *app) openWithPasswordPrompt(path string) (*pdfengine.Document, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errFileUnreadable, err)
+	}
+
+	doc, err := a.pool.Open(data, nil)
+	if errors.Is(err, pdfengine.ErrPasswordRequired) {
+		wrongAttempt := false
+		for {
+			pw, ok := promptPassword(a.mainWindow, filepathBase(path), wrongAttempt)
+			if !ok {
+				return nil, nil
+			}
+			doc, err = a.pool.Open(data, &pw)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, pdfengine.ErrPasswordRequired) {
+				return nil, err
+			}
+			wrongAttempt = true
+		}
+	} else if err != nil {
+		return nil, err
+	}
+
+	return doc, nil
+}
+
 // openFile opens path and adds it as a new tab. It is reused from Task 20
 // for command-line startup, so both the Open dialog and the command-line
 // argument path share one code path.
@@ -179,30 +218,12 @@ var errFileUnreadable = errors.New("无法读取文件")
 // this uses walk's non-declarative constructors instead of the `declarative`
 // package for the tab's contents.
 func (a *app) openFile(path string) error {
-	data, err := os.ReadFile(path)
+	doc, err := a.openWithPasswordPrompt(path)
 	if err != nil {
-		return fmt.Errorf("%w: %v", errFileUnreadable, err)
-	}
-
-	doc, err := a.pool.Open(data, nil)
-	if errors.Is(err, pdfengine.ErrPasswordRequired) {
-		wrongAttempt := false
-		for {
-			pw, ok := promptPassword(a.mainWindow, filepathBase(path), wrongAttempt)
-			if !ok {
-				return errors.New("已取消：需要密码")
-			}
-			doc, err = a.pool.Open(data, &pw)
-			if err == nil {
-				break
-			}
-			if !errors.Is(err, pdfengine.ErrPasswordRequired) {
-				return err
-			}
-			wrongAttempt = true
-		}
-	} else if err != nil {
 		return err
+	}
+	if doc == nil {
+		return errors.New("已取消：需要密码")
 	}
 
 	t := newTab(path, doc)
