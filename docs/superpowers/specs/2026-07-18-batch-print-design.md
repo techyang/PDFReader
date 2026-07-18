@@ -66,7 +66,7 @@ for each file in 文件列表:
     for each 页码 in pages:
         StartPage(hdc)
         img, err := doc.RenderPage(页码, 300)
-        if err != nil: 记录该页失败，EndPage，continue（不中止整份文件）
+        if err != nil: EndPage，中止该文件的后续页码（不影响批次里其它文件）
         if 灰度: img = toGrayscale(img)
         目标矩形 := 按纸张尺寸(减边距) + 缩放模式(适合页面/实际大小/百分比) 计算
         StretchDIBits(hdc, img, 目标矩形)
@@ -77,7 +77,7 @@ for each file in 文件列表:
 return 汇总结果
 ```
 
-**错误处理策略**：单个文件失败（无法解析/打印机中途报错）只影响该文件，记录原因后继续下一个；不中止整个批次。用户主动点「取消」则立即停止处理后续文件，已经开始的当前文件尽量走完 `EndDoc`（避免留下半截的打印任务卡在后台打印机队列里）。
+**错误处理策略**：单个文件失败（无法解析/打印机中途报错）只影响该文件，记录原因后继续下一个；不中止整个批次。文件内部单页失败（比如某一页渲染出错）会中止该文件剩下的页码——`Result` 每个文件只存一个 `Err`，没有"部分页失败、部分页成功"这种中间状态可表达，与其悄悄漏印几页不如把整份文件标记为失败、让用户看到明确的失败原因；已经打印成功的前几页仍然会留在打印机队列里（`EndDoc` 依然会被调用，见下）。用户主动点「取消」则立即停止处理后续文件，已经开始的当前文件尽量走完 `EndDoc`（避免留下半截的打印任务卡在后台打印机队列里）。
 
 **可测试性**：把上面伪代码里 `CreateDC`/`StartDoc`/`StartPage`/`StretchDIBits`/`EndPage`/`EndDoc`/`DeleteDC` 这几个 GDI 调用抽成一个小接口（`type printBackend interface {...}`），`RunPrintJob` 只依赖这个接口，不直接依赖 `lxn/win`。单元测试用假 backend（记录调用序列，可模拟"第 2 个文件 StartDoc 失败""收到进度回调后返回取消"等场景），覆盖"跳过失败继续""取消后停止""进度回调参数正确"这些编排逻辑，不需要真实打印机。真正的 GDI 调用只能手动测试（Windows 自带的"Microsoft Print to PDF"虚拟打印机可以在没有物理打印机的情况下验证管线整体走通）。
 
