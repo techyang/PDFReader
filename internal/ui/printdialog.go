@@ -33,36 +33,16 @@ func (it *printItem) listLabel() string {
 	return fmt.Sprintf("%s   %d 页", filepath.Base(it.path), it.pageCount)
 }
 
-// printDialogState holds everything showPrintDialog's closures need -
-// kept as a struct (rather than a pile of captured locals) so the
-// "add/remove file"/"properties"/"print" handlers can all reach shared
-// state without threading a dozen parameters through each other.
+// printDialogState holds the state showPrintDialog's closures need to
+// share across the dialog's lifetime, beyond what's already captured
+// directly as local variables (the widget pointers, and a itself via
+// the enclosing method's receiver) - just the file list and the
+// printer-dependent state that isn't tied to any single widget.
 type printDialogState struct {
-	owner walk.Form
-	pool  *pdfengine.Pool
-
 	items        []*printItem
 	printerNames []string
 	paperSizes   []print.PaperSize
 	baseDevMode  *win.DEVMODE // set by onProperties; nil until the user opens "属性" at least once
-
-	dlg          *walk.Dialog
-	fileList     *walk.ListBox
-	printerBox   *walk.ComboBox
-	paperBox     *walk.ComboBox
-	copiesEdit   *walk.NumberEdit
-	grayscaleBox *walk.CheckBox
-	duplexBox    *walk.CheckBox
-	allPagesBtn  *walk.RadioButton
-	customBtn    *walk.RadioButton
-	rangeEdit    *walk.LineEdit
-	portraitBtn  *walk.RadioButton
-	landscapeBtn *walk.RadioButton
-	fitBtn       *walk.RadioButton
-	actualBtn    *walk.RadioButton
-	percentBtn   *walk.RadioButton
-	percentEdit  *walk.NumberEdit
-	printBtn     *walk.PushButton
 }
 
 // showPrintDialog opens the print dialog. initial, if non-nil, is
@@ -73,7 +53,7 @@ type printDialogState struct {
 // doing the printing itself so a later task can wire in the progress
 // dialog without touching this file again.
 func (a *app) showPrintDialog(initial *printItem, onRun func(items []print.Item, settings print.Settings)) {
-	st := &printDialogState{owner: a.mainWindow, pool: a.pool}
+	st := &printDialogState{}
 	if initial != nil {
 		st.items = append(st.items, initial)
 	}
