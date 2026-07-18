@@ -546,7 +546,7 @@ func (a *app) applyPageViewMode(t *tab) {
 
 	if !a.cfg.ContinuousMode {
 		t.continuousLayout = nil
-		t.pageView.SetSizePixels(walk.Size{Width: viewport.Width, Height: viewport.Height})
+		resizePageView(t, walk.Size{Width: viewport.Width, Height: viewport.Height})
 		t.pageView.Invalidate()
 		return
 	}
@@ -582,7 +582,7 @@ func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle)
 	// out of this one without drawing.
 	if viewport := t.pageScroll.ClientBoundsPixels(); viewport.Width > 0 && viewport.Height > 0 {
 		if cur := t.pageView.SizePixels(); cur.Width != viewport.Width || cur.Height != viewport.Height {
-			t.pageView.SetSizePixels(walk.Size{Width: viewport.Width, Height: viewport.Height})
+			resizePageView(t, walk.Size{Width: viewport.Width, Height: viewport.Height})
 			t.pageView.Invalidate()
 			return nil
 		}

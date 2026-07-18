@@ -80,7 +80,31 @@ func ensureContinuousLayout(t *tab, viewportWidthPx float64) error {
 	t.continuousLayoutW = viewportWidthPx
 	t.continuousTotalH = total
 
-	return t.pageView.SetSizePixels(walk.Size{Width: int(maxWidth), Height: int(total)})
+	return resizePageView(t, walk.Size{Width: int(maxWidth), Height: int(total)})
+}
+
+// resizePageView sets pageView's size and mirrors it onto pageView's
+// real native parent - not pageScroll itself, but pageScroll's internal
+// composite (see continuousScrollY's comment below for why). walk
+// normally keeps that composite sized to fit its content via
+// scrollViewLayoutItem.PerformLayout (scrollview.go), but that only runs
+// while pageScroll takes part in an ancestor's automatic layout pass -
+// which it deliberately doesn't in this codebase (see the comment above
+// content's creation in app.go, on why pageScroll's own bounds are set
+// by hand instead). Left unmanaged, the composite stays stuck at its
+// creation size - CW_USEDEFAULT resolves to 0x0 for a child window - so
+// pageView ends up sized correctly but sitting inside a zero-area
+// parent: Windows never considers it visible and never sends it
+// WM_PAINT, no matter how many times it's resized or invalidated. This
+// is the actual reason no PDF content ever rendered even after
+// pageScroll itself started getting correct bounds.
+func resizePageView(t *tab, size walk.Size) error {
+	if parent, ok := t.pageView.Parent().(interface{ SetSizePixels(walk.Size) error }); ok {
+		if err := parent.SetSizePixels(size); err != nil {
+			return err
+		}
+	}
+	return t.pageView.SetSizePixels(size)
 }
 
 // continuousScrollY returns how far pageView has been scrolled down
