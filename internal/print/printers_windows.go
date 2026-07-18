@@ -93,26 +93,28 @@ func ListPaperSizes(printerName string) ([]PaperSize, error) {
 		return nil, fmt.Errorf("print: printer %q reports no paper codes", printerName)
 	}
 
-	// DC_PAPERNAMES and DC_PAPERS are documented as parallel arrays, but
-	// that's a driver convention, not something DeviceCapabilities
-	// enforces - it just writes as many entries as the driver reports
-	// for whichever capability is queried. Bound both buffers by the
-	// smaller of the two counts so a nonconforming driver that reports
-	// more DC_PAPERS entries than DC_PAPERNAMES entries (or vice versa)
-	// can't make DeviceCapabilities write past either buffer's end.
-	count := nameCount
-	if paperCount < count {
-		count = paperCount
-	}
-
-	nameBuf := make([]uint16, int(count)*paperNameEntryLen)
+	// nameBuf/codeBuf are each sized and filled to THEIR OWN capability's
+	// count - DeviceCapabilities has no buffer-length parameter, so it
+	// writes exactly as many entries as that capability's own null-query
+	// reported, and giving it a smaller buffer than that would overflow it.
+	// Only the combining loop below is bounded by the smaller of the two
+	// counts, since a driver isn't guaranteed to report the same count for
+	// both (documented as a convention, not enforced by the API) - reading
+	// fewer entries than a buffer holds is safe, unlike writing more than
+	// it holds.
+	nameBuf := make([]uint16, int(nameCount)*paperNameEntryLen)
 	if r := win.DeviceCapabilities(namePtr, nil, win.DC_PAPERNAMES, &nameBuf[0], nil); int32(r) <= 0 {
 		return nil, fmt.Errorf("print: DeviceCapabilities DC_PAPERNAMES failed for %q", printerName)
 	}
 
-	codeBuf := make([]int16, count)
+	codeBuf := make([]int16, paperCount)
 	if r := win.DeviceCapabilities(namePtr, nil, win.DC_PAPERS, (*uint16)(unsafe.Pointer(&codeBuf[0])), nil); int32(r) <= 0 {
 		return nil, fmt.Errorf("print: DeviceCapabilities DC_PAPERS failed for %q", printerName)
+	}
+
+	count := nameCount
+	if paperCount < count {
+		count = paperCount
 	}
 
 	sizes := make([]PaperSize, 0, count)
