@@ -4,10 +4,7 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"io"
-	"log"
 	"os"
-	"time"
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/lxn/walk"
@@ -17,26 +14,6 @@ import (
 	"pdfreader/internal/document"
 	"pdfreader/internal/pdfengine"
 )
-
-// debugLog is a TEMPORARY diagnostic aid for tracking down the
-// sidebar-swallows-the-window layout bug - writes to pdfreader-debug.log
-// next to the exe (stdout/stderr aren't reliably usable here: the exe is
-// built -H=windowsgui, see fixStdHandles in main.go) so actual measured
-// widget sizes can be inspected after a run instead of guessed from
-// reading walk's layout source. Remove once the bug is confirmed fixed.
-var debugLog = log.New(io.Discard, "", 0)
-
-func initDebugLog() {
-	path := "pdfreader-debug.log"
-	if exe, err := os.Executable(); err == nil {
-		path = exe + "-debug.log" // next to the exe, independent of CWD (double-click vs. shell)
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return
-	}
-	debugLog = log.New(f, "", log.Ltime|log.Lmicroseconds)
-}
 
 // app is the single running instance of the UI, owning the pdfium pool,
 // the persisted config, the main window and all open tabs.
@@ -61,8 +38,6 @@ var _ = pdfium.Pdfium(nil) // keep import used until pool wiring lands in later 
 // initialFile may be empty; if set, it is opened as the first tab on
 // startup (see Task 20).
 func Run(initialFile string) (int, error) {
-	initDebugLog()
-
 	pool, err := pdfengine.NewPool()
 	if err != nil {
 		return 1, err
@@ -148,9 +123,6 @@ func Run(initialFile string) (int, error) {
 	if err := mw.Create(); err != nil {
 		return 1, err
 	}
-	a.tabWidget.SizeChanged().Attach(func() {
-		debugLog.Printf("tabWidget.SizeChanged: mainWindow=%v tabWidget=%v", a.mainWindow.BoundsPixels(), a.tabWidget.BoundsPixels())
-	})
 	a.rebuildRecentMenu()
 	a.fitPageAction.SetEnabled(!a.cfg.ContinuousMode)
 	if initialFile != "" {
@@ -159,11 +131,6 @@ func Run(initialFile string) (int, error) {
 		}
 	}
 	a.mainWindow.Show()
-	debugLog.Printf("after Show(): mainWindow=%v tabWidget=%v", a.mainWindow.BoundsPixels(), a.tabWidget.BoundsPixels())
-	if len(a.tabs) > 0 {
-		t0 := a.tabs[0]
-		debugLog.Printf("after Show(): tab0 splitter=n/a sidebarPageScroll=%v pageView=%v", t0.pageScroll.BoundsPixels(), t0.pageView.BoundsPixels())
-	}
 	return a.mainWindow.Run(), nil
 }
 
@@ -264,10 +231,6 @@ func (a *app) openFile(path string) error {
 
 	tabPage.SetLayout(walk.NewVBoxLayout())
 
-	tabPage.SizeChanged().Attach(func() {
-		debugLog.Printf("tabPage.SizeChanged: tabPage=%v", tabPage.BoundsPixels())
-	})
-
 	// Plain HBox composite, NOT HSplitter (see the sidebarComposite-width
 	// history below). content itself needs a real Layout to be sized by
 	// tabPage's VBoxLayout - createLayoutItemForWidgetWithContext
@@ -307,9 +270,6 @@ func (a *app) openFile(path string) error {
 		hbox.SetAlignment(walk.AlignHNearVNear)
 		hbox.SetMargins(walk.Margins{})
 	}
-	content.SizeChanged().Attach(func() {
-		debugLog.Printf("content.SizeChanged: tabPage=%v content=%v", tabPage.BoundsPixels(), content.BoundsPixels())
-	})
 
 	sidebarComposite, err := walk.NewComposite(content)
 	if err != nil {
@@ -317,9 +277,6 @@ func (a *app) openFile(path string) error {
 		doc.Close()
 		return err
 	}
-	sidebarComposite.SizeChanged().Attach(func() {
-		debugLog.Printf("sidebarComposite.SizeChanged: content=%v sidebarComposite=%v", content.BoundsPixels(), sidebarComposite.BoundsPixels())
-	})
 	sidebarComposite.SetLayout(walk.NewVBoxLayout())
 	const sidebarWidth = 240
 	sidebarComposite.SetMinMaxSize(walk.Size{Width: sidebarWidth}, walk.Size{Width: sidebarWidth})
@@ -459,13 +416,8 @@ func (a *app) openFile(path string) error {
 	}
 	pageView.SetClearsBackground(true)
 
-	debugLog.Printf("after sidebar pinned: content=%v sidebarComposite=%v pageScroll=%v sidebarMax=%v",
-		content.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), sidebarComposite.MaxSizePixels())
-
 	t.pageScroll = pageScroll
 	pageScroll.SizeChanged().Attach(func() {
-		debugLog.Printf("pageScroll.SizeChanged: content=%v sidebarComposite=%v pageScroll=%v pageView=%v",
-			content.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), pageView.BoundsPixels())
 		a.applyPageViewMode(t)
 	})
 
@@ -508,18 +460,6 @@ func (a *app) openFile(path string) error {
 	}
 	a.applyPageViewMode(t)
 
-	// TEMPORARY: snapshot the whole bounds chain ~2s after open,
-	// independent of whether any SizeChanged event fired - this tells us
-	// whether the layout ever actually settles, decoupled from whatever
-	// event we're (maybe wrongly) relying on elsewhere in this file.
-	go func() {
-		time.Sleep(2 * time.Second)
-		a.mainWindow.Synchronize(func() {
-			debugLog.Printf("2s-later snapshot: mainWindow=%v tabWidget=%v tabPage=%v content=%v sidebarComposite=%v pageScroll=%v pageView=%v",
-				a.mainWindow.BoundsPixels(), a.tabWidget.BoundsPixels(), tabPage.BoundsPixels(), content.BoundsPixels(), sidebarComposite.BoundsPixels(), pageScroll.BoundsPixels(), pageView.BoundsPixels())
-		})
-	}()
-
 	return nil
 }
 
@@ -539,7 +479,6 @@ func (a *app) applyPageViewMode(t *tab) {
 		return
 	}
 	viewport := t.pageScroll.ClientBoundsPixels()
-	debugLog.Printf("applyPageViewMode: path=%s pageScrollViewport=%v continuousMode=%v", t.path, viewport, a.cfg.ContinuousMode)
 	if viewport.Width <= 0 || viewport.Height <= 0 {
 		return
 	}
@@ -558,9 +497,6 @@ func (a *app) applyPageViewMode(t *tab) {
 }
 
 func (a *app) paintTab(t *tab, canvas *walk.Canvas, updateBounds walk.Rectangle) error {
-	debugLog.Printf("paintTab called: path=%s updateBounds=%v pageScrollClientBoundsPixels=%v pageScrollBoundsPixels=%v pageViewSizePixels=%v continuousMode=%v",
-		t.path, updateBounds, t.pageScroll.ClientBoundsPixels(), t.pageScroll.BoundsPixels(), t.pageView.SizePixels(), a.cfg.ContinuousMode)
-
 	if a.cfg.ContinuousMode {
 		return a.paintContinuousTab(t, canvas)
 	}
