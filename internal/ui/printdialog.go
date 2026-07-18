@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -482,11 +483,11 @@ func fallbackPaperSizesFor() []print.PaperSize {
 // deliberate cancel.
 func openPrintItem(a *app, path string) (*printItem, error) {
 	doc, err := a.openWithPasswordPrompt(path)
+	if errors.Is(err, errPasswordPromptCancelled) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
-	}
-	if doc == nil {
-		return nil, nil
 	}
 
 	return &printItem{path: path, doc: doc, pageCount: doc.PageCount(), ownsDoc: true}, nil

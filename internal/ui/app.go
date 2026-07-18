@@ -170,15 +170,25 @@ func (a *app) onOpenClicked() {
 // latter are unrelated to whether the file still exists.
 var errFileUnreadable = errors.New("无法读取文件")
 
+// errPasswordPromptCancelled marks a password-required document the user
+// gave up unlocking (cancelled the prompt, or kept entering the wrong
+// password until they stopped trying) - see openWithPasswordPrompt. This
+// is a deliberate user choice, not a real failure, but callers still
+// need to be able to tell it apart from "opened successfully."
+var errPasswordPromptCancelled = errors.New("已取消：需要密码")
+
 // openWithPasswordPrompt reads path's bytes and opens them via a.pool,
 // prompting for a password (retrying on wrong password) if the document
 // turns out to be encrypted - the read+open+password-retry logic shared
 // by openFile (which goes on to build a whole tab) and printdialog.go's
 // openPrintItem (which just needs the *pdfengine.Document itself). A
-// cancelled or permanently-wrong password returns a nil doc with a nil
-// error - not treated as a hard failure, since giving up on a password
-// prompt is a deliberate user choice, not something either caller should
-// report as an unexpected error.
+// cancelled or permanently-wrong password returns errPasswordPromptCancelled
+// rather than a hard error, since giving up on a password prompt is a
+// deliberate user choice, not something either caller should report as
+// an unexpected failure - but returning a distinct sentinel (instead of
+// a bare nil doc with a nil error) still lets callers tell this apart
+// from a genuine successful open via errors.Is, rather than relying on
+// remembering a doc == nil check.
 func (a *app) openWithPasswordPrompt(path string) (*pdfengine.Document, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -191,7 +201,7 @@ func (a *app) openWithPasswordPrompt(path string) (*pdfengine.Document, error) {
 		for {
 			pw, ok := promptPassword(a.mainWindow, filepathBase(path), wrongAttempt)
 			if !ok {
-				return nil, nil
+				return nil, errPasswordPromptCancelled
 			}
 			doc, err = a.pool.Open(data, &pw)
 			if err == nil {
@@ -221,9 +231,6 @@ func (a *app) openFile(path string) error {
 	doc, err := a.openWithPasswordPrompt(path)
 	if err != nil {
 		return err
-	}
-	if doc == nil {
-		return errors.New("已取消：需要密码")
 	}
 
 	t := newTab(path, doc)
