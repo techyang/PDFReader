@@ -176,3 +176,49 @@ func TestLoad_MissingFileDefaultsToSinglePageMode(t *testing.T) {
 		t.Fatalf("cfg.ContinuousMode = true, want false (default is single-page mode)")
 	}
 }
+
+func TestSaveThenLoad_PrintSettings(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	cfg := &Config{
+		LastPrinter:      "Microsoft Print to PDF",
+		LastGrayscale:    true,
+		LastDuplex:       true,
+		LastPaperName:    "A4",
+		LastOrientation:  "landscape",
+		LastScaleMode:    "percent",
+		LastScalePercent: 75,
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if loaded.LastPrinter != "Microsoft Print to PDF" {
+		t.Fatalf("loaded.LastPrinter = %q, want %q", loaded.LastPrinter, "Microsoft Print to PDF")
+	}
+	if !loaded.LastGrayscale || !loaded.LastDuplex {
+		t.Fatalf("loaded grayscale/duplex = %v/%v, want true/true", loaded.LastGrayscale, loaded.LastDuplex)
+	}
+	if loaded.LastPaperName != "A4" || loaded.LastOrientation != "landscape" {
+		t.Fatalf("loaded paper/orientation = %q/%q, want A4/landscape", loaded.LastPaperName, loaded.LastOrientation)
+	}
+	if loaded.LastScaleMode != "percent" || loaded.LastScalePercent != 75 {
+		t.Fatalf("loaded scale = %q/%d, want percent/75", loaded.LastScaleMode, loaded.LastScalePercent)
+	}
+}
+
+func TestLoad_MissingFileDefaultsToNoPrinter(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := LoadFrom(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.LastPrinter != "" {
+		t.Fatalf("cfg.LastPrinter = %q, want empty (fall back to system default printer at print time)", cfg.LastPrinter)
+	}
+}

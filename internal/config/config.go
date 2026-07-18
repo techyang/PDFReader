@@ -28,6 +28,19 @@ type Config struct {
 	SidebarShown   bool         `json:"sidebarShown"`
 	SidebarTab     string       `json:"sidebarTab"` // "outline" or "thumbnails"
 	ContinuousMode bool         `json:"continuousMode"`
+
+	// LastPrinter/... persist the print dialog's settings across
+	// restarts. LastPaperName is a display name, not a DMPAPER_* code -
+	// the print dialog re-resolves it against the selected printer's
+	// current paper list each time it opens, since a numeric code isn't
+	// guaranteed to mean the same paper across different printer drivers.
+	LastPrinter      string `json:"lastPrinter"`
+	LastGrayscale    bool   `json:"lastPrintGrayscale"`
+	LastDuplex       bool   `json:"lastPrintDuplex"`
+	LastPaperName    string `json:"lastPrintPaperSize"`
+	LastOrientation  string `json:"lastPrintOrientation"`  // "portrait" or "landscape"
+	LastScaleMode    string `json:"lastPrintScaleMode"`    // "fit", "actual", or "percent"
+	LastScalePercent int    `json:"lastPrintScalePercent"`
 }
 
 func defaultConfig() *Config {
