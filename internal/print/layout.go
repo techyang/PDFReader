@@ -42,6 +42,9 @@ const (
 // clamp-at-0 centering already used for on-screen single-page painting
 // in pageview.go's paintTab.
 func destRect(imgW, imgH int, widthPt, heightPt float64, dpiX, dpiY, canvasW, canvasH int32, mode ScaleMode, percent int) (x, y, w, h int32) {
+	if imgW <= 0 || imgH <= 0 {
+		return 0, 0, 0, 0
+	}
 	switch mode {
 	case ScaleActualSize, ScalePercent:
 		factor := 1.0

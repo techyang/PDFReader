@@ -35,6 +35,16 @@ func TestDestRect_Percent_ScalesActualSize(t *testing.T) {
 	}
 }
 
+func TestDestRect_ZeroImageDimensions_ReturnsZeroRect(t *testing.T) {
+	// A zero-size source image must not trigger a divide-by-zero (Inf/NaN
+	// conversion to int32 is implementation-defined garbage), and must not
+	// panic; it should just yield an empty rect.
+	x, y, w, h := destRect(0, 0, 100, 100, 300, 300, 3000, 3000, ScaleFitPage, 0)
+	if x != 0 || y != 0 || w != 0 || h != 0 {
+		t.Fatalf("x,y,w,h = %d,%d,%d,%d, want 0,0,0,0", x, y, w, h)
+	}
+}
+
 func TestDestRect_NeverNegativeOffset(t *testing.T) {
 	// Image bigger than the canvas (e.g. actual-size overflowing a small
 	// canvas) must clamp x/y to 0, not go negative.
