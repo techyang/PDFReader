@@ -132,19 +132,26 @@ func ListPaperSizes(printerName string) ([]PaperSize, error) {
 // QueryDevMode opens the driver's native "属性" dialog (DocumentProperties
 // with DM_IN_PROMPT) for printerName, seeded with base (or the driver's
 // own defaults if base is nil), owned by ownerHWnd. ok is false if the
-// user cancelled the dialog.
-func QueryDevMode(ownerHWnd win.HWND, printerName string, base *win.DEVMODE) (dm win.DEVMODE, ok bool) {
+// user cancelled the dialog. base and the returned buffer are raw
+// DEVMODE-sized byte buffers, not *win.DEVMODE - see gdi_windows.go's
+// queryDevModeBuffer for why a fixed-size win.DEVMODE isn't safe to pass
+// to DocumentProperties.
+func QueryDevMode(ownerHWnd win.HWND, printerName string, base []byte) (buf []byte, ok bool) {
 	namePtr, err := syscall.UTF16PtrFromString(printerName)
 	if err != nil {
-		return win.DEVMODE{}, false
+		return nil, false
 	}
 
 	if base != nil {
-		dm = *base
+		buf = base
 	} else {
-		win.DocumentProperties(0, 0, namePtr, &dm, nil, win.DM_OUT_BUFFER)
+		buf, err = queryDevModeBuffer(namePtr)
+		if err != nil {
+			return nil, false
+		}
 	}
+	dm := (*win.DEVMODE)(unsafe.Pointer(&buf[0]))
 
-	ret := win.DocumentProperties(ownerHWnd, 0, namePtr, &dm, &dm, win.DM_IN_BUFFER|win.DM_OUT_BUFFER|win.DM_IN_PROMPT)
-	return dm, ret == win.IDOK
+	ret := win.DocumentProperties(ownerHWnd, 0, namePtr, dm, dm, win.DM_IN_BUFFER|win.DM_OUT_BUFFER|win.DM_IN_PROMPT)
+	return buf, ret == win.IDOK
 }

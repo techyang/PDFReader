@@ -8,7 +8,6 @@ import (
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
-	"github.com/lxn/win"
 
 	"pdfreader/internal/pdfengine"
 	"pdfreader/internal/print"
@@ -41,17 +40,36 @@ type printDialogState struct {
 	items        []*printItem
 	printerNames []string
 	paperSizes   []print.PaperSize
-	baseDevMode  *win.DEVMODE // set by onProperties; nil until the user opens "属性" at least once
+	baseDevMode  []byte // set by onProperties; nil until the user opens "属性" at least once
 }
 
-// showPrintDialog opens the print dialog. initial, if non-nil, is
-// pre-added to the file list as a borrowed (not owned) item - this is
-// how openFile's currently-active tab gets pre-filled (see app.go's
-// onPrint). onRun is called once the user clicks "打印" with the final
-// item list and settings; it's a callback rather than this function
-// doing the printing itself so a later task can wire in the progress
-// dialog without touching this file again.
-func (a *app) showPrintDialog(initial *printItem, onRun func(items []print.Item, settings print.Settings)) {
+// showPrintDialog opens the print dialog and blocks until the user closes
+// it (Print, Cancel, Escape, or the close box) - i.e. until dlg.Run()
+// itself returns, not just until Accept()/Cancel() is requested.
+//
+// If the user clicked "打印", onAccept is called with the final item list
+// and settings, plus closeOwned, a func the caller must invoke once it's
+// entirely done with those items (typically after the print job
+// finishes) to close any pdfengine.Document this dialog opened itself
+// (see printItem.ownsDoc) - it isn't done here because RunJob still needs
+// those Documents to be open.
+//
+// Crucially, onAccept is called only AFTER dlg.Run() has returned - i.e.
+// once dlg's own modal message loop has fully unwound off the call
+// stack, not from inside its OnClicked handler. An earlier version called
+// onRun directly from inside the "打印" button's OnClicked (before
+// dlg.Run() could return), which meant the print-progress dialog
+// (runPrintJob's progressDlg) got created and Run while still nested many
+// stack frames deep inside dlg's own still-active mainLoop() - and that
+// was root-caused (via goroutine-stack dumps) to reliably deadlock later,
+// inside win32's SetWindowPos, whenever progressDlg itself tried to
+// close, no matter how its own Accept()/Cancel() was triggered. Deferring
+// onAccept to run only after dlg.Run() returns means progressDlg gets
+// created from the same call depth dlg itself was (directly from
+// onPrint, itself a top-level a.mainWindow action handler) instead of
+// nested inside another still-live dialog's loop, which avoids the
+// deadlock entirely - see app.go's onPrint for the call site.
+func (a *app) showPrintDialog(initial *printItem, onAccept func(items []print.Item, settings print.Settings, closeOwned func())) {
 	st := &printDialogState{}
 	if initial != nil {
 		st.items = append(st.items, initial)
@@ -110,6 +128,14 @@ func (a *app) showPrintDialog(initial *printItem, onRun func(items []print.Item,
 		initialRangeSpec = st.items[0].rangeSpec
 	}
 	initialAllPages := initialRangeSpec == ""
+
+	// acceptedItems/acceptedSettings/accepted are filled in by the "打印"
+	// button's OnClicked below and read only after dlg.Run() returns - see
+	// showPrintDialog's doc comment for why onAccept isn't just called
+	// directly from OnClicked.
+	var acceptedItems []print.Item
+	var acceptedSettings print.Settings
+	accepted := false
 
 	var dlg *walk.Dialog
 	var fileList *walk.ListBox
@@ -208,11 +234,11 @@ func (a *app) showPrintDialog(initial *printItem, onRun func(items []print.Item,
 			return
 		}
 		printerName := st.printerNames[printerBox.CurrentIndex()]
-		dm, ok := print.QueryDevMode(dlg.Handle(), printerName, st.baseDevMode)
+		buf, ok := print.QueryDevMode(dlg.Handle(), printerName, st.baseDevMode)
 		if !ok {
 			return
 		}
-		st.baseDevMode = &dm
+		st.baseDevMode = buf
 	}
 
 	collectSettings := func() print.Settings {
@@ -378,13 +404,13 @@ func (a *app) showPrintDialog(initial *printItem, onRun func(items []print.Item,
 							PushButton{AssignTo: &cancelBtn, Text: "取消", OnClicked: func() { dlg.Cancel() }},
 							PushButton{AssignTo: &printBtn, Text: "打印", Enabled: len(st.items) > 0, OnClicked: func() {
 								saveRangeForSelection()
-								settings := collectSettings()
-								items := make([]print.Item, len(st.items))
+								acceptedSettings = collectSettings()
+								acceptedItems = make([]print.Item, len(st.items))
 								for i, it := range st.items {
-									items[i] = print.Item{Path: it.path, Doc: it.doc, PageCount: it.pageCount, RangeSpec: it.rangeSpec}
+									acceptedItems[i] = print.Item{Path: it.path, Doc: it.doc, PageCount: it.pageCount, RangeSpec: it.rangeSpec}
 								}
+								accepted = true
 								dlg.Accept()
-								onRun(items, settings)
 							}},
 						},
 					},
@@ -423,16 +449,25 @@ func (a *app) showPrintDialog(initial *printItem, onRun func(items []print.Item,
 
 	dlg.Run()
 
-	// Any item the dialog itself opened (ownsDoc) that's still in the
-	// list when the dialog closes (cancelled, or closed after a
-	// successful print) must be closed here - a later task's RunJob call
-	// only reads from these Documents, it never takes ownership of
-	// closing them.
-	for _, it := range st.items {
-		if it.ownsDoc {
-			it.doc.Close()
+	// closeOwned closes every item the dialog itself opened (ownsDoc) -
+	// see printItem's doc comment. On cancel it runs immediately below;
+	// on accept the caller runs it once it's done with the items
+	// (RunJob only reads from these Documents, it never takes ownership
+	// of closing them).
+	items := st.items
+	closeOwned := func() {
+		for _, it := range items {
+			if it.ownsDoc {
+				it.doc.Close()
+			}
 		}
 	}
+
+	if accepted {
+		onAccept(acceptedItems, acceptedSettings, closeOwned)
+		return
+	}
+	closeOwned()
 }
 
 func percentOrDefault(v int) float64 {

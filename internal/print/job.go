@@ -4,8 +4,6 @@ package print
 import (
 	"errors"
 
-	"github.com/lxn/win"
-
 	"pdfreader/internal/pdfengine"
 )
 
@@ -25,14 +23,19 @@ type Settings struct {
 	ScaleMode    ScaleMode
 	ScalePercent int // only meaningful when ScaleMode == ScalePercent
 
-	// BaseDevMode, if non-nil, is used as the starting DEVMODE instead of
-	// re-querying the printer's driver defaults - this is how the "属性"
-	// button's result (DocumentProperties with DM_IN_PROMPT) flows into
-	// the actual print job. The fields above are still applied on top of
-	// it (see the future gdi_windows.go's buildDevMode), so e.g. a duplex
-	// setting changed via "属性" is overridden by this dialog's own "双面
-	// 打印" checkbox.
-	BaseDevMode *win.DEVMODE
+	// BaseDevMode, if non-nil, is used as the starting DEVMODE buffer
+	// instead of re-querying the printer's driver defaults - this is how
+	// the "属性" button's result (DocumentProperties with DM_IN_PROMPT)
+	// flows into the actual print job. It's a raw byte buffer rather than
+	// *win.DEVMODE because a driver's real DEVMODE can be larger than
+	// win.DEVMODE's fixed struct (drivers may append private "extra" data
+	// - see win.DEVMODE.DmDriverExtra); gdi_windows.go's queryDevModeBuffer
+	// allocates it at the driver-reported size and casts a *win.DEVMODE
+	// onto the front of it. The fields above are still applied on top of
+	// it (see gdi_windows.go's buildDevMode), so e.g. a duplex setting
+	// changed via "属性" is overridden by this dialog's own "双面打印"
+	// checkbox.
+	BaseDevMode []byte
 }
 
 // Item is one file in a batch print job.

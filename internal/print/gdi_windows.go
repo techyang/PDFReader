@@ -59,7 +59,36 @@ type gdiBackend struct{}
 // (as opposed to the fake used in job_test.go).
 func NewGDIBackend() Backend { return gdiBackend{} }
 
+// queryDevModeBuffer returns a byte buffer sized exactly as printerName's
+// driver reports needing for its DEVMODE - win.DEVMODE's fixed portion,
+// plus however many bytes of driver-private "extra" data the driver
+// appends (see win.DEVMODE.DmDriverExtra). Calling DocumentProperties
+// with both DEVMODE pointers nil (fMode 0) is the documented way to ask
+// for just that size, with no assumption about buffer size at all.
+//
+// This matters because passing a plain win.DEVMODE{} (Go's fixed-size
+// struct, with no room for that trailing extra data) anywhere
+// DocumentProperties/CreateDC expect the FULL buffer makes the driver
+// write/read past the end of that value whenever DmDriverExtra > 0 -
+// several real drivers do this, "Microsoft XPS Document Writer" among
+// them, so it isn't hypothetical: it corrupts adjacent stack memory and
+// crashes the whole process outright (not a recoverable Go panic) the
+// moment a print job is opened against such a printer.
+func queryDevModeBuffer(namePtr *uint16) ([]byte, error) {
+	size := win.DocumentProperties(0, 0, namePtr, nil, nil, 0)
+	if size <= 0 {
+		return nil, fmt.Errorf("print: DocumentProperties failed to report DEVMODE size")
+	}
+	buf := make([]byte, size)
+	dm := (*win.DEVMODE)(unsafe.Pointer(&buf[0]))
+	if win.DocumentProperties(0, 0, namePtr, dm, nil, win.DM_OUT_BUFFER) < 0 {
+		return nil, fmt.Errorf("print: DocumentProperties DM_OUT_BUFFER failed")
+	}
+	return buf, nil
+}
+
 func (gdiBackend) Open(settings Settings, docName string) (BackendJob, error) {
+	Debugf("Open: begin docName=%q printer=%q", docName, settings.PrinterName)
 	driverPtr, err := syscall.UTF16PtrFromString("WINSPOOL")
 	if err != nil {
 		return nil, err
@@ -69,18 +98,20 @@ func (gdiBackend) Open(settings Settings, docName string) (BackendJob, error) {
 		return nil, err
 	}
 
-	var dm win.DEVMODE
-	if settings.BaseDevMode != nil {
-		dm = *settings.BaseDevMode
-	} else {
-		// DM_OUT_BUFFER reads the printer's current driver-default DEVMODE
-		// into dm; buildDevMode below only needs to override the handful
-		// of fields our own dialog exposes.
-		win.DocumentProperties(0, 0, namePtr, &dm, nil, win.DM_OUT_BUFFER)
+	buf := settings.BaseDevMode
+	if buf == nil {
+		Debugf("Open: querying DEVMODE buffer")
+		buf, err = queryDevModeBuffer(namePtr)
+		if err != nil {
+			return nil, err
+		}
 	}
-	buildDevMode(&dm, settings)
+	dm := (*win.DEVMODE)(unsafe.Pointer(&buf[0]))
+	buildDevMode(dm, settings)
 
-	hdc := win.CreateDC(driverPtr, namePtr, nil, &dm)
+	Debugf("Open: CreateDC begin")
+	hdc := win.CreateDC(driverPtr, namePtr, nil, dm)
+	Debugf("Open: CreateDC returned hdc=%v", hdc)
 	if hdc == 0 {
 		return nil, fmt.Errorf("print: CreateDC failed for printer %q", settings.PrinterName)
 	}
@@ -98,10 +129,12 @@ func (gdiBackend) Open(settings Settings, docName string) (BackendJob, error) {
 		CbSize:      int32(unsafe.Sizeof(win.DOCINFO{})),
 		LpszDocName: docNamePtr,
 	}
+	Debugf("Open: StartDoc begin")
 	if win.StartDoc(hdc, &di) <= 0 {
 		win.DeleteDC(hdc)
 		return nil, fmt.Errorf("print: StartDoc failed for %q", docName)
 	}
+	Debugf("Open: StartDoc done")
 
 	return &gdiJob{hdc: hdc}, nil
 }
@@ -153,15 +186,18 @@ type gdiJob struct {
 }
 
 func (j *gdiJob) PrintPage(doc *pdfengine.Document, pageIndex int, settings Settings) error {
+	Debugf("PrintPage: page=%d StartPage begin", pageIndex)
 	if win.StartPage(j.hdc) <= 0 {
 		return fmt.Errorf("print: StartPage failed")
 	}
+	Debugf("PrintPage: page=%d StartPage done, RenderPage begin", pageIndex)
 
 	img, err := doc.RenderPage(pageIndex, renderDPI)
 	if err != nil {
 		win.EndPage(j.hdc)
 		return err
 	}
+	Debugf("PrintPage: page=%d RenderPage done", pageIndex)
 	widthPt, heightPt, err := doc.PageSize(pageIndex)
 	if err != nil {
 		win.EndPage(j.hdc)
@@ -178,20 +214,27 @@ func (j *gdiJob) PrintPage(doc *pdfengine.Document, pageIndex int, settings Sett
 
 	bits, bmiHeader := toDIBBits(img, settings.Grayscale)
 	bmi := win.BITMAPINFO{BmiHeader: bmiHeader}
+	Debugf("PrintPage: page=%d StretchDIBits begin", pageIndex)
 	if stretchDIBits(j.hdc, x, y, w, h, 0, 0, int32(imgW), int32(imgH), unsafe.Pointer(&bits[0]), &bmi, win.DIB_RGB_COLORS, win.SRCCOPY) <= 0 {
 		win.EndPage(j.hdc)
 		return fmt.Errorf("print: StretchDIBits failed")
 	}
+	Debugf("PrintPage: page=%d StretchDIBits done, EndPage begin", pageIndex)
 
 	if win.EndPage(j.hdc) <= 0 {
 		return fmt.Errorf("print: EndPage failed")
 	}
+	Debugf("PrintPage: page=%d EndPage done", pageIndex)
 	return nil
 }
 
 func (j *gdiJob) Close() error {
+	Debugf("Close: EndDoc begin")
 	endDocResult := win.EndDoc(j.hdc)
+	Debugf("Close: EndDoc returned %d", endDocResult)
+	Debugf("Close: DeleteDC begin")
 	win.DeleteDC(j.hdc)
+	Debugf("Close: DeleteDC done")
 	if endDocResult <= 0 {
 		return fmt.Errorf("print: EndDoc failed")
 	}
